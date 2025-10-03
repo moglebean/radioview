@@ -1,0 +1,27 @@
+:root {
+  color: #1f1f1f;
+  background-color: #f4f5f7;
+  font-family: 'Roboto', 'Open Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: #f4f5f7;
+}
+
+#app {
+  min-height: 100vh;
+}
