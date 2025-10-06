@@ -1,11 +1,14 @@
 <template>
   <v-app>
     <v-navigation-drawer permanent rail>
-      <v-list density="compact" nav>
-        <v-list-item prepend-icon="mdi-view-dashboard" />
-        <v-list-item prepend-icon="mdi-chart-box" />
-        <v-list-item prepend-icon="mdi-cog-outline" />
-      </v-list>
+      <v-divider class="my-2" />
+        <v-btn
+          color="primary"
+          variant="flat"
+          prepend-icon="mdi-plus"
+          @click="addHelloPane"
+        />
+
     </v-navigation-drawer>
 
     <v-app-bar app color="grey-lighten-4">
@@ -21,7 +24,9 @@
     <v-divider />
 
     <v-main>
-      <div class="pa-6"></div>
+      <div class="pa-6">
+        <VueGridStack ref="gridStack" />
+      </div>
     </v-main>
 
     <v-navigation-drawer permanent location="right" :rail="rightRail">
@@ -32,19 +37,20 @@
           :prepend-icon="rightDrawerIcon"
           @click="toggleRightRail"
         >
-          {{ rightDrawerLabel }}
         </v-btn>
       </div>
       <v-divider />
-
     </v-navigation-drawer>
   </v-app>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
+import VueGridStack from './components/VueGridStack.vue'
+import HelloWorldPane from './components/HelloWorldPane.vue'
 
 const rightRail = ref(true)
+const gridStack = ref(null)
 
 const toggleRightRail = () => {
   rightRail.value = !rightRail.value
@@ -56,4 +62,14 @@ const rightDrawerIcon = computed(() =>
 const rightDrawerLabel = computed(() =>
   rightRail.value ? 'Expand' : 'Collapse'
 )
+
+const addHelloPane = () => {
+  gridStack.value?.addPane({
+    title: 'Hello World',
+    component: HelloWorldPane,
+    w: 2,
+    h: 2,
+  })
+  console.log("Added pane")
+}
 </script>

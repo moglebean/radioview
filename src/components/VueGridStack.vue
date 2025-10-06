@@ -61,7 +61,6 @@ const buildGridOptions = (settings = {}) => {
     handle: settings.draggableHandle,
     ...settings.draggableOptions,
   }
-adfa
   return options
 }
 
