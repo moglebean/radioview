@@ -102,6 +102,7 @@ const buildGridOptions = (settings = {}, groups = []) => {
     float: settings.float ?? true,
     margin: settings.margin ?? 12,
     cellHeight: settings.cellHeight ?? 260,
+    minRow: settings.minRow ?? 1,
     disableOneColumnMode: settings.disableOneColumnMode ?? true,
     staticGrid: settings.staticGrid ?? false,
     alwaysShowResizeHandle: false,
