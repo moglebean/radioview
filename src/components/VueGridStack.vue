@@ -212,6 +212,11 @@ const addPane = async (config = {}) => {
     throw new Error('addPane requires a component option')
   }
 
+  const hasExplicitX = Object.prototype.hasOwnProperty.call(config, 'x')
+  const hasExplicitY = Object.prototype.hasOwnProperty.call(config, 'y')
+  const hasExplicitW = Object.prototype.hasOwnProperty.call(config, 'w')
+  const hasExplicitH = Object.prototype.hasOwnProperty.call(config, 'h')
+
   const id = ensureUniqueId(config.id)
   const groups = sanitizedDragGroups.value
   const paneGroup = resolvePaneGroup(config.group, groups)
@@ -221,11 +226,11 @@ const addPane = async (config = {}) => {
     title: config.title ?? 'Untitled Pane',
     component: markRaw(config.component),
     props: config.props ?? {},
-    x: Object.prototype.hasOwnProperty.call(config, 'x') ? config.x : undefined,
-    y: Object.prototype.hasOwnProperty.call(config, 'y') ? config.y : undefined,
-    w: config.w ?? 1,
-    h: config.h ?? 1,
-    autoPosition: config.autoPosition ?? (!Object.prototype.hasOwnProperty.call(config, 'x') && !Object.prototype.hasOwnProperty.call(config, 'y')),
+    x: hasExplicitX ? config.x : undefined,
+    y: hasExplicitY ? config.y : undefined,
+    w: hasExplicitW ? config.w : 1,
+    h: hasExplicitH ? config.h : 1,
+    autoPosition: config.autoPosition ?? (!hasExplicitX && !hasExplicitY),
     group: paneGroup,
   }
 
@@ -246,6 +251,17 @@ const addPane = async (config = {}) => {
   }
 
   grid.makeWidget(el)
+
+  if (grid && (hasExplicitX || hasExplicitY || hasExplicitW || hasExplicitH)) {
+    const updatePayload = {}
+    if (hasExplicitX) updatePayload.x = config.x
+    if (hasExplicitY) updatePayload.y = config.y
+    if (hasExplicitW) updatePayload.w = config.w
+    if (hasExplicitH) updatePayload.h = config.h
+    updatePayload.autoPosition = false
+    grid.update(el, updatePayload)
+  }
+
   if (el.gridstackNode) {
     const { x, y, w, h } = el.gridstackNode
     pane.x = x
@@ -378,6 +394,14 @@ const handleAdded = async (_event, nodes = []) => {
   debugLog('handleAdded', { nodes })
   for (const node of nodes ?? []) {
     const paneId = getPaneIdFromNode(node)
+    const targetPosition = node
+      ? {
+          x: node.x,
+          y: node.y,
+          w: node.w,
+          h: node.h,
+        }
+      : null
 
     if (!paneId) {
       debugLog('handleAdded.skip', { reason: 'noId', node })
@@ -410,10 +434,10 @@ const handleAdded = async (_event, nodes = []) => {
       component: transfer.pane.component,
       props: transfer.pane.props,
       group: transfer.pane.group,
-      x: node.x,
-      y: node.y,
-      w: node.w,
-      h: node.h,
+      x: targetPosition?.x,
+      y: targetPosition?.y,
+      w: targetPosition?.w,
+      h: targetPosition?.h,
       autoPosition: false,
     })
   }
@@ -431,6 +455,14 @@ const handleDropped = async (_event, _previousNode, newNode) => {
   }
 
   const transfer = paneTransfers.get(paneId)
+  const targetPosition = newNode
+    ? {
+        x: newNode.x,
+        y: newNode.y,
+        w: newNode.w,
+        h: newNode.h,
+      }
+    : null
   if (!transfer) {
     debugLog('handleDropped.noTransfer', { paneId })
     return
@@ -456,10 +488,10 @@ const handleDropped = async (_event, _previousNode, newNode) => {
     component: transfer.pane.component,
     props: transfer.pane.props,
     group: transfer.pane.group,
-    x: newNode.x,
-    y: newNode.y,
-    w: newNode.w,
-    h: newNode.h,
+    x: targetPosition?.x,
+    y: targetPosition?.y,
+    w: targetPosition?.w,
+    h: targetPosition?.h,
     autoPosition: false,
   })
 }

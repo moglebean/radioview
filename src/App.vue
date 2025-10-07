@@ -197,8 +197,8 @@ const addHelloPane = () => {
   gridStack.value?.addPane({
     title: 'Hello World',
     component: HelloWorldPane,
-    w: 2,
-    h: 2,
+    w: 1,
+    h: 1,
   })
 }
 
