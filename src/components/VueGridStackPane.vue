@@ -1,6 +1,6 @@
 <template>
   <v-card class="pane__outer d-flex flex-column" height="100%">
-  <v-card-title class="headlinepane__header">
+  <v-card-title class="pane__header headline">
     <v-row>
       <slot name="title">{{ title }}</slot>
       

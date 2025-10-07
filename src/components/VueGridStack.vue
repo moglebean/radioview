@@ -24,6 +24,8 @@ const generatePaneId = () => {
 }
 
 const buildGridOptions = (settings = {}) => {
+  const draggableHandle = settings.draggableHandle ?? '.pane__header'
+
   const options = {
     column: settings.column ?? 4,
     float: settings.float ?? true,
@@ -32,7 +34,7 @@ const buildGridOptions = (settings = {}) => {
     disableOneColumnMode: settings.disableOneColumnMode ?? true,
     staticGrid: settings.staticGrid ?? false,
     alwaysShowResizeHandle: false,
-    draggableHandle: settings.draggableHandle ??'.pane__header',
+    draggableHandle,
   }
 
   if (settings.maxRow != null) {
@@ -59,10 +61,9 @@ const buildGridOptions = (settings = {}) => {
   options.draggable = {
     scroll: settings.draggableScroll ?? false,
     appendTo: settings.draggableAppendTo ?? 'body',
-    handle: settings.draggableHandle,
+    handle: draggableHandle,
     ...settings.draggableOptions,
   }
-  console.log(options)
   return options
 }
 

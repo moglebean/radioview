@@ -199,7 +199,6 @@ const addHelloPane = () => {
     w: 2,
     h: 2,
   })
-  console.log("Added pane")
 }
 
 const addRightHelloPane = () => {
