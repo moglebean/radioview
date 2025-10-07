@@ -1,7 +1,6 @@
 <script setup>
 import { markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { GridStack } from 'gridstack'
-import Pane from './Pane.vue'
 
 const props = defineProps({
   settings: {
@@ -32,7 +31,8 @@ const buildGridOptions = (settings = {}) => {
     cellHeight: settings.cellHeight ?? 260,
     disableOneColumnMode: settings.disableOneColumnMode ?? true,
     staticGrid: settings.staticGrid ?? false,
-    alwaysShowResizeHandle: false
+    alwaysShowResizeHandle: false,
+    draggableHandle: settings.draggableHandle ??'.pane__header',
   }
 
   if (settings.maxRow != null) {
@@ -57,11 +57,12 @@ const buildGridOptions = (settings = {}) => {
   }
 
   options.draggable = {
-    scroll: settings.draggableScroll ?? true,
+    scroll: settings.draggableScroll ?? false,
     appendTo: settings.draggableAppendTo ?? 'body',
     handle: settings.draggableHandle,
     ...settings.draggableOptions,
   }
+  console.log(options)
   return options
 }
 
@@ -293,9 +294,9 @@ defineExpose({
       :data-gs-auto-position="pane.autoPosition ? 'true' : undefined"
     >
       
-        <Pane class="grid-stack-item-content" :title="pane.title" @close="removePane(pane.id)">
-          <component :is="pane.component" v-bind="pane.props" />
-        </Pane>
+        <!-- <Pane class="grid-stack-item-content" :title="pane.title" @close="removePane(pane.id)"> -->
+        <component class="grid-stack-item-content" :is="pane.component" v-bind="pane.props" @close="removePane(pane.id)"/>
+        <!-- </Pane> -->
 
     </div>
   </div>
@@ -304,15 +305,11 @@ defineExpose({
 <style scoped>
 .grid-stack {
   width: 100%;
-  min-height: calc(100vh - 160px);
 }
 
 .grid-stack-item-content {
   height: 100%;
-}
-
-.grid-stack.ui-resizable-se{
-    opacity: 0 !important;
+  overflow: hidden !important;
 }
 
 </style>

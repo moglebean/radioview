@@ -77,7 +77,7 @@
           class="right-grid-stack"
         />
       </div>
-    </v-navigation-drawer>
+  </v-navigation-drawer>
   </v-app>
 </template>
 
