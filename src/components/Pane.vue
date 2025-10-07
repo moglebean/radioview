@@ -1,28 +1,32 @@
 <template>
-  <v-sheet class="pane" rounded elevation="6">
-    <v-toolbar class="pane__toolbar pane__drag-handle" density="compact" flat>
-      <div class="pane__title">
-        <v-icon icon="mdi-drag" size="18" class="mr-2" />
-        <span class="pane__title-text">{{ title }}</span>
+  <div class="pane__outer">
+    <v-sheet class="pane" rounded elevation="6">
+      <v-toolbar class="pane__toolbar" density="compact" flat>
+        <div class="pane__title">
+          <span class="pane__title-text">{{ title }}</span>
+        </div>
+        <v-spacer />
+        <v-menu location="bottom">
+          <template #activator="{ props }">
+            <v-btn icon variant="text" density="comfortable" v-bind="props">
+              <v-icon icon="mdi-dots-vertical" />
+            </v-btn>
+          </template>
+          <v-list>
+            <v-list-item @click="emit('close')">
+              <v-list-item-title>Close</v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="emit('clone')">
+              <v-list-item-title>Clone</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
+      </v-toolbar>
+      <div class="pane__content">
+        <slot />
       </div>
-      <v-spacer />
-      <v-menu location="bottom">
-        <template #activator="{ props }">
-          <v-btn icon variant="text" density="comfortable" v-bind="props">
-            <v-icon icon="mdi-dots-vertical" />
-          </v-btn>
-        </template>
-        <v-list>
-          <v-list-item @click="emit('close')">
-            <v-list-item-title>Close</v-list-item-title>
-          </v-list-item>
-        </v-list>
-      </v-menu>
-    </v-toolbar>
-    <div class="pane__content">
-      <slot />
-    </div>
-  </v-sheet>
+    </v-sheet>
+  </div>
 </template>
 
 <script setup>
@@ -33,15 +37,24 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close','clone'])
 </script>
 
 <style scoped>
+.pane__outer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding-bottom: 12px;
+}
+
 .pane {
   display: flex;
   flex-direction: column;
   height: 100%;
   background-color: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+
 }
 
 .pane__toolbar {

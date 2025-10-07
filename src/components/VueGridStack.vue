@@ -32,6 +32,7 @@ const buildGridOptions = (settings = {}) => {
     cellHeight: settings.cellHeight ?? 260,
     disableOneColumnMode: settings.disableOneColumnMode ?? true,
     staticGrid: settings.staticGrid ?? false,
+    alwaysShowResizeHandle: false
   }
 
   if (settings.maxRow != null) {
@@ -51,7 +52,7 @@ const buildGridOptions = (settings = {}) => {
   }
 
   options.resizable = {
-    handles: settings.resizableHandles ?? 'e, se, s',
+    handles: settings.resizableHandles ?? 'se',
     ...settings.resizableOptions,
   }
 
@@ -291,11 +292,11 @@ defineExpose({
       :data-gs-h="pane.h ?? 1"
       :data-gs-auto-position="pane.autoPosition ? 'true' : undefined"
     >
-      <div class="grid-stack-item-content">
-        <Pane :title="pane.title" @close="removePane(pane.id)">
+      
+        <Pane class="grid-stack-item-content" :title="pane.title" @close="removePane(pane.id)">
           <component :is="pane.component" v-bind="pane.props" />
         </Pane>
-      </div>
+
     </div>
   </div>
 </template>
@@ -309,4 +310,9 @@ defineExpose({
 .grid-stack-item-content {
   height: 100%;
 }
+
+.grid-stack.ui-resizable-se{
+    opacity: 0 !important;
+}
+
 </style>
