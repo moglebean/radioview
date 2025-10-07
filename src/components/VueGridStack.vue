@@ -1,11 +1,49 @@
 <script setup>
-import { markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { GridStack } from 'gridstack'
+
+const getGlobalValue = (key, initializer) => {
+  if (typeof globalThis === 'undefined') {
+    return initializer()
+  }
+  if (!globalThis[key]) {
+    globalThis[key] = initializer()
+  }
+  return globalThis[key]
+}
+
+const paneTransfers = getGlobalValue('__vueGridStackPaneTransfers__', () => new Map())
+let gridInstanceCounter = getGlobalValue('__vueGridStackInstanceCounter__', () => 0)
+
+const toStringArray = (groups) =>
+  Array.isArray(groups) ? groups.filter((entry) => typeof entry === 'string') : []
+
+const resolvePaneGroup = (candidate, groups) => {
+  if (typeof candidate === 'string') {
+    return candidate
+  }
+  if (groups.length > 0) {
+    return groups[0]
+  }
+  return ''
+}
+
+const createInstanceId = () => {
+  gridInstanceCounter += 1
+  if (typeof globalThis !== 'undefined') {
+    globalThis.__vueGridStackInstanceCounter__ = gridInstanceCounter
+  }
+  return `grid-stack-${gridInstanceCounter}`
+}
 
 const props = defineProps({
   settings: {
     type: Object,
     default: () => ({}),
+  },
+  dragGroups: {
+    type: Array,
+    default: () => [],
   },
 })
 
@@ -14,8 +52,21 @@ const emit = defineEmits(['panesChange'])
 const gridContainer = ref(null)
 const panes = ref([])
 
+const sanitizedDragGroups = computed(() => toStringArray(props.dragGroups))
+const instanceId = createInstanceId()
+const debugLog = (...args) => {
+  // eslint-disable-next-line no-console
+  console.log(`[VueGridStack:${instanceId}]`, ...args)
+}
+const pendingRemovals = new Set()
+const suppressedRemovedIds = new Set()
+let isClearing = false
+
 let grid
 let changeHandler
+let dragStartHandler
+let dragHandler
+let dragStopHandler
 let paneCounter = 0
 
 const generatePaneId = () => {
@@ -23,7 +74,27 @@ const generatePaneId = () => {
   return `pane-${Date.now()}-${paneCounter}`
 }
 
-const buildGridOptions = (settings = {}) => {
+const getPaneIdFromNode = (node) =>
+  node?.id ??
+  node?.el?.getAttribute?.('data-gs-id') ??
+  node?.el?.dataset?.gsId ??
+  node?.gridstackNode?.id ??
+  node?.el?.gridstackNode?.id
+
+const evaluateAcceptSetting = (acceptSetting, element) => {
+  if (typeof acceptSetting === 'function') {
+    return !!acceptSetting(element)
+  }
+  if (typeof acceptSetting === 'string') {
+    return element?.matches?.(acceptSetting) ?? false
+  }
+  if (typeof acceptSetting === 'boolean') {
+    return acceptSetting
+  }
+  return true
+}
+
+const buildGridOptions = (settings = {}, groups = []) => {
   const draggableHandle = settings.draggableHandle ?? '.pane__header'
 
   const options = {
@@ -64,6 +135,41 @@ const buildGridOptions = (settings = {}) => {
     handle: draggableHandle,
     ...settings.draggableOptions,
   }
+
+  const groupSet = new Set(groups)
+  const acceptSetting = settings.acceptWidgets
+
+  options.acceptWidgets = (element) => {
+    if (!element) {
+      debugLog('acceptWidgets.rejected', { reason: 'no-element' })
+      return false
+    }
+    if (!evaluateAcceptSetting(acceptSetting, element)) {
+      debugLog('acceptWidgets.rejected', {
+        reason: 'acceptSetting',
+        acceptSetting,
+        element,
+      })
+      return false
+    }
+    const paneGroup = element.getAttribute?.('data-pane-group') ?? ''
+    if (paneGroup === '') {
+      debugLog('acceptWidgets.rejected', {
+        reason: 'emptyGroup',
+        element,
+      })
+      return false
+    }
+    const allowed = groupSet.has(paneGroup)
+    debugLog('acceptWidgets.checked', {
+      paneGroup,
+      allowedGroups: [...groupSet],
+      allowed,
+      element,
+    })
+    return allowed
+  }
+
   return options
 }
 
@@ -77,6 +183,7 @@ const emitChange = () => {
 }
 
 const syncPositions = (items = []) => {
+  debugLog('syncPositions', { items })
   items.forEach((item) => {
     const pane = panes.value.find((entry) => entry.id === item.id)
     if (pane) {
@@ -105,6 +212,9 @@ const addPane = async (config = {}) => {
   }
 
   const id = ensureUniqueId(config.id)
+  const groups = sanitizedDragGroups.value
+  const paneGroup = resolvePaneGroup(config.group, groups)
+  debugLog('addPane', { id, config, resolvedGroup: paneGroup })
   const pane = {
     id,
     title: config.title ?? 'Untitled Pane',
@@ -115,18 +225,21 @@ const addPane = async (config = {}) => {
     w: config.w ?? 1,
     h: config.h ?? 1,
     autoPosition: config.autoPosition ?? (!Object.prototype.hasOwnProperty.call(config, 'x') && !Object.prototype.hasOwnProperty.call(config, 'y')),
+    group: paneGroup,
   }
 
   panes.value.push(pane)
   await nextTick()
 
   if (!grid || !gridContainer.value) {
+    debugLog('addPane.defer', { id })
     emitChange()
     return pane
   }
 
   const el = gridContainer.value.querySelector(`[data-gs-id="${id}"]`)
   if (!el) {
+    debugLog('addPane.noElement', { id })
     emitChange()
     return pane
   }
@@ -146,8 +259,10 @@ const addPane = async (config = {}) => {
 }
 
 const removePane = (id) => {
+  debugLog('removePane', { id })
   const el = gridContainer.value?.querySelector(`[data-gs-id="${id}"]`)
   if (el && grid) {
+    pendingRemovals.add(id)
     grid.removeWidget(el)
   }
 
@@ -155,15 +270,23 @@ const removePane = (id) => {
   if (index !== -1) {
     panes.value.splice(index, 1)
     emitChange()
+    paneTransfers.delete(id)
+    debugLog('removePane.removed', { id })
     return true
   }
 
+  debugLog('removePane.miss', { id })
   return false
 }
 
 const updatePane = (id, updates = {}) => {
   const pane = panes.value.find((entry) => entry.id === id)
   if (!pane) return null
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'group')) {
+    const groups = sanitizedDragGroups.value
+    pane.group = resolvePaneGroup(updates.group, groups)
+  }
 
   Object.assign(pane, updates)
 
@@ -192,19 +315,232 @@ const findPaneByTitle = (title) =>
   panes.value.find((entry) => entry.title.toLowerCase() === title.toLowerCase()) ?? null
 
 const clearPanes = () => {
+  debugLog('clearPanes')
   if (grid) {
-    grid.removeAll()
+    isClearing = true
+    try {
+      grid.removeAll()
+      debugLog('clearPanes.removeAll')
+    } finally {
+      isClearing = false
+    }
   }
   panes.value.splice(0, panes.value.length)
   emitChange()
 }
 
+const handleRemoved = (_event, nodes = []) => {
+  debugLog('handleRemoved', { nodes, isClearing })
+  if (isClearing) {
+    debugLog('handleRemoved.skip', { reason: 'clearing' })
+    return
+  }
+
+  nodes.forEach((node) => {
+    const paneId = getPaneIdFromNode(node)
+
+    if (!paneId) {
+      debugLog('handleRemoved.skip', { reason: 'noId', node })
+      return
+    }
+
+    if (suppressedRemovedIds.has(paneId)) {
+      suppressedRemovedIds.delete(paneId)
+      debugLog('handleRemoved.skip', { reason: 'suppressed', paneId })
+      return
+    }
+
+    if (pendingRemovals.has(paneId)) {
+      pendingRemovals.delete(paneId)
+      paneTransfers.delete(paneId)
+      debugLog('handleRemoved.pendingRemoval', { paneId })
+      return
+    }
+
+    const index = panes.value.findIndex((pane) => pane.id === paneId)
+    if (index === -1) {
+      debugLog('handleRemoved.notTracked', { paneId })
+      return
+    }
+
+    const [pane] = panes.value.splice(index, 1)
+    paneTransfers.set(paneId, {
+      pane,
+      fromGridId: instanceId,
+    })
+    debugLog('handleRemoved.transferReady', { paneId, pane })
+    emitChange()
+  })
+}
+
+const handleAdded = async (_event, nodes = []) => {
+  debugLog('handleAdded', { nodes })
+  for (const node of nodes ?? []) {
+    const paneId = getPaneIdFromNode(node)
+
+    if (!paneId) {
+      debugLog('handleAdded.skip', { reason: 'noId', node })
+      continue
+    }
+
+    const transfer = paneTransfers.get(paneId)
+    if (!transfer) {
+      debugLog('handleAdded.noTransfer', { paneId })
+      continue
+    }
+
+    if (transfer.fromGridId === instanceId) {
+      debugLog('handleAdded.originGrid', { paneId, instanceId })
+      continue
+    }
+
+    paneTransfers.delete(paneId)
+
+    if (node?.el && grid) {
+      suppressedRemovedIds.add(paneId)
+      grid.removeWidget(node.el)
+      debugLog('handleAdded.removedPlaceholder', { paneId })
+    }
+
+    debugLog('handleAdded.readdPane', { paneId, transfer })
+    await addPane({
+      id: transfer.pane.id,
+      title: transfer.pane.title,
+      component: transfer.pane.component,
+      props: transfer.pane.props,
+      group: transfer.pane.group,
+      x: node.x,
+      y: node.y,
+      w: node.w,
+      h: node.h,
+      autoPosition: false,
+    })
+  }
+}
+
+const handleDropped = async (_event, _previousNode, newNode) => {
+  debugLog('handleDropped', { previousNode: _previousNode, newNode })
+  const paneId =
+    getPaneIdFromNode(_previousNode) ??
+    getPaneIdFromNode(newNode)
+
+  if (!paneId) {
+    debugLog('handleDropped.skip', { reason: 'noId', newNode })
+    return
+  }
+
+  const transfer = paneTransfers.get(paneId)
+  if (!transfer) {
+    debugLog('handleDropped.noTransfer', { paneId })
+    return
+  }
+
+  if (transfer.fromGridId === instanceId) {
+    debugLog('handleDropped.originGrid', { paneId })
+    return
+  }
+
+  paneTransfers.delete(paneId)
+
+  if (newNode?.el && grid) {
+    suppressedRemovedIds.add(paneId)
+    grid.removeWidget(newNode.el)
+    debugLog('handleDropped.removedPlaceholder', { paneId })
+  }
+
+  debugLog('handleDropped.readdPane', { paneId, transfer, newNode })
+  await addPane({
+    id: transfer.pane.id,
+    title: transfer.pane.title,
+    component: transfer.pane.component,
+    props: transfer.pane.props,
+    group: transfer.pane.group,
+    x: newNode.x,
+    y: newNode.y,
+    w: newNode.w,
+    h: newNode.h,
+    autoPosition: false,
+  })
+}
+
+const applyGridOptions = (settings) => {
+  debugLog('applyGridOptions', { settings, groups: sanitizedDragGroups.value })
+  if (!grid) return
+  const options = buildGridOptions(settings, sanitizedDragGroups.value)
+  grid.updateOptions(options)
+  if (typeof options.column === 'number') {
+    grid.column(options.column)
+  }
+  if (typeof options.maxRow === 'number') {
+    grid.setGridHeight(options.maxRow)
+  }
+  if (options.margin != null) {
+    grid.margin(options.margin)
+  }
+  if (options.cellHeight != null) {
+    grid.cellHeight(options.cellHeight)
+  }
+  if (typeof options.staticGrid === 'boolean') {
+    grid.setStatic(options.staticGrid)
+  }
+}
+
+const attachDragListeners = () => {
+  if (!grid) return
+  changeHandler = (_event, items) => {
+    debugLog('change', { items })
+    syncPositions(items)
+  }
+  dragStartHandler = (_event, element) => {
+    const paneId = element?.getAttribute?.('data-gs-id')
+    debugLog('dragstart', { paneId })
+  }
+  dragHandler = (_event, element) => {
+    const paneId = element?.getAttribute?.('data-gs-id')
+    debugLog('drag', { paneId })
+  }
+  dragStopHandler = (_event, element) => {
+    const paneId = element?.getAttribute?.('data-gs-id')
+    debugLog('dragstop', { paneId })
+  }
+  grid.on('change', changeHandler)
+  grid.on('removed', handleRemoved)
+  grid.on('added', handleAdded)
+  grid.on('dropped', handleDropped)
+  grid.on('dragstart', dragStartHandler)
+  grid.on('drag', dragHandler)
+  grid.on('dragstop', dragStopHandler)
+}
+
+const detachDragListeners = () => {
+  if (!grid) return
+  if (changeHandler) {
+    grid.off('change', changeHandler)
+    changeHandler = undefined
+  }
+  grid.off('removed', handleRemoved)
+  grid.off('added', handleAdded)
+  grid.off('dropped', handleDropped)
+  if (dragStartHandler) {
+    grid.off('dragstart', dragStartHandler)
+    dragStartHandler = undefined
+  }
+  if (dragHandler) {
+    grid.off('drag', dragHandler)
+    dragHandler = undefined
+  }
+  if (dragStopHandler) {
+    grid.off('dragstop', dragStopHandler)
+    dragStopHandler = undefined
+  }
+}
+
 onMounted(() => {
   if (!gridContainer.value) return
 
-  grid = GridStack.init(buildGridOptions(props.settings), gridContainer.value)
+  const options = buildGridOptions(props.settings, sanitizedDragGroups.value)
+  grid = GridStack.init(options, gridContainer.value)
 
-  const options = buildGridOptions(props.settings)
   if (options.margin != null) {
     grid.margin(options.margin)
   }
@@ -231,13 +567,16 @@ onMounted(() => {
     })
   })
 
-  changeHandler = (_event, items) => syncPositions(items)
-  grid.on('change', changeHandler)
+  attachDragListeners()
+  debugLog('mounted', { options })
 })
 
 onBeforeUnmount(() => {
-  if (grid && changeHandler) {
-    grid.off('change', changeHandler)
+  detachDragListeners()
+  for (const [paneId, transfer] of paneTransfers.entries()) {
+    if (transfer.fromGridId === instanceId) {
+      paneTransfers.delete(paneId)
+    }
   }
   if (grid) {
     grid.destroy(false)
@@ -248,26 +587,18 @@ onBeforeUnmount(() => {
 watch(
   () => props.settings,
   (newSettings) => {
-    if (!grid) return
-    const options = buildGridOptions(newSettings)
-    grid.updateOptions(options)
-    if (typeof options.column === 'number') {
-      grid.column(options.column)
-    }
-    if (typeof options.maxRow === 'number') {
-      grid.setGridHeight(options.maxRow)
-    }
-    if (options.margin != null) {
-      grid.margin(options.margin)
-    }
-    if (options.cellHeight != null) {
-      grid.cellHeight(options.cellHeight)
-    }
-    if (typeof options.staticGrid === 'boolean') {
-      grid.setStatic(options.staticGrid)
-    }
+    debugLog('settingsChanged', { newSettings })
+    applyGridOptions(newSettings)
   },
   { deep: true },
+)
+
+watch(
+  sanitizedDragGroups,
+  () => {
+    debugLog('dragGroupsChanged', { groups: sanitizedDragGroups.value })
+    applyGridOptions(props.settings)
+  },
 )
 
 defineExpose({
@@ -293,6 +624,7 @@ defineExpose({
       :data-gs-w="pane.w ?? 1"
       :data-gs-h="pane.h ?? 1"
       :data-gs-auto-position="pane.autoPosition ? 'true' : undefined"
+      :data-pane-group="pane.group ?? ''"
     >
       
         <!-- <Pane class="grid-stack-item-content" :title="pane.title" @close="removePane(pane.id)"> -->

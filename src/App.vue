@@ -43,7 +43,7 @@
 
     <v-main>
       <div class="pa-6">
-        <VueGridStack ref="gridStack" />
+        <VueGridStack ref="gridStack" :drag-groups="['ui']" />
       </div>
     </v-main>
 
@@ -74,6 +74,7 @@
         <VueGridStack
           ref="rightGridStack"
           :settings="rightGridSettings"
+          :drag-groups="['ui']"
           class="right-grid-stack"
         />
       </div>
