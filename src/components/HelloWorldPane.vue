@@ -12,10 +12,11 @@
         Friends, romans, countrymen, lend me your ears.  I come to bury Caesar, not to praise him.
       </p>
     </div>
-      <v-btn color="primary" variant="flat">Action</v-btn>
+      
 
     <!-- Add the button to the actions slot-->
     <template #actions>
+      <v-btn color="primary" variant="flat">Action</v-btn>
     </template>
   </VueGridStackPane>
 </template>

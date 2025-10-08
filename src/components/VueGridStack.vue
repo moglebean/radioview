@@ -659,11 +659,14 @@ defineExpose({
       :data-gs-auto-position="pane.autoPosition ? 'true' : undefined"
       :data-pane-group="pane.group ?? ''"
     >
-      
-        <!-- <Pane class="grid-stack-item-content" :title="pane.title" @close="removePane(pane.id)"> -->
-        <component class="grid-stack-item-content" :is="pane.component" v-bind="pane.props" @close="removePane(pane.id)"/>
-        <!-- </Pane> -->
-
+      <div class="grid-stack-item-content-wrapper">
+        <component
+          class="grid-stack-item-content"
+          :is="pane.component"
+          v-bind="pane.props"
+          @close="removePane(pane.id)"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -671,11 +674,23 @@ defineExpose({
 <style scoped>
 .grid-stack {
   width: 100%;
+  --grid-stack-vertical-gap: 8px;
+  --grid-stack-horizontal-gap: 8px;
+}
+
+.grid-stack-item-content-wrapper {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding-bottom: var(--grid-stack-vertical-gap);
+  padding-right: var(--grid-stack-horizontal-gap);
 }
 
 .grid-stack-item-content {
   height: 100%;
   overflow: hidden !important;
+  flex: 1 1 auto;
 }
 
 </style>
