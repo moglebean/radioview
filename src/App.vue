@@ -23,6 +23,13 @@
           @click="addHelloPane"
         />
         <v-btn
+          color="secondary-darken-1"
+          variant="flat"
+          prepend-icon="mdi-plus"
+          :title="'Add Panfall pane to workspace'"
+          @click="addGoodbyePane"
+        />
+        <v-btn
           color="secondary"
           variant="flat"
           prepend-icon="mdi-format-list-bulleted-square"
@@ -32,7 +39,7 @@
       </div>
     </v-navigation-drawer>
 
-    <v-app-bar app color="grey-lighten-4">
+    <v-app-bar app color="primary-darken-1">
       <v-toolbar-title>RadioView</v-toolbar-title>
       <v-spacer />
       <v-chip color="success" text-color="white" size="small">
@@ -86,6 +93,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import VueGridStack from './components/VueGridStack.vue'
 import HelloWorldPane from './components/HelloWorldPane.vue'
+import GoodbyeWorld from './components/GoodbyeWorld.vue'
 
 const RIGHT_RAIL_WIDTH = 80
 const DEFAULT_RIGHT_DRAWER_WIDTH = 320
@@ -201,6 +209,15 @@ const addHelloPane = () => {
     h: 1,
   })
 }
+const addGoodbyePane = () => {
+  gridStack.value?.addPane({
+    title: 'Hello World',
+    component: GoodbyeWorld,
+    w: 1,
+    h: 1,
+  })
+}
+
 
 const addRightHelloPane = () => {
   if (rightRail.value) {
