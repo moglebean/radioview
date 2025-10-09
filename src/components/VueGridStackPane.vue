@@ -1,7 +1,7 @@
 <template>
   <v-card class="pane__outer d-flex flex-column" height="100%">
-  <v-card-title class="pane__header headline">
-    <v-row>
+  <v-card-title class="pane__header headline bg-primary">
+    <v-row class="align-center">
       <slot name="title">{{ title }}</slot>
       
       <v-spacer />
