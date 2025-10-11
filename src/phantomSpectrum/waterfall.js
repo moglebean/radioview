@@ -1,0 +1,649 @@
+
+import getColormap, { computeColormapArray } from './colormap.js'
+import { createWaterfallDecoder } from './wrappers.js'
+import Denque from 'denque'
+import 'core-js/actual/set-immediate'
+import 'core-js/actual/clear-immediate'
+
+export default class SpectrumWaterfall {
+  constructor (options = {}) {
+    this.spectrum = false
+    this.waterfall = false
+
+    this.waterfallQueue = new Denque(10)
+    this.drawnWaterfallQueue = new Denque(4096)
+    this.lagTime = 0
+    this.spectrumAlpha = 0.5
+    this.spectrumFiltered = [[-1, -1], [0]]
+
+    this.waterfallColourShift = 80
+    // https://gist.github.com/mikhailov-work/ee72ba4191942acecc03fe6da94fc73f
+    this.colormap = []
+
+    this.setColormap('gqrx')
+
+    this.clients = {}
+    this.clientColormap = computeColormapArray(getColormap('rainbow'))
+
+    this.updateTimeout = undefined
+    this.updateImmediate = undefined
+
+    this.lineResets = 0
+    this.waterfallDecoder = undefined
+    this.waterfallDrawInterval = undefined
+    this.rangeChangeHandler = options.onRangeChange ?? null
+    this.userID = undefined
+
+    if (options.initialColormap) {
+      this.setColormap(options.initialColormap)
+    }
+  }
+
+  initCanvas (settings) {
+    this.canvasElem = settings.canvasElem
+    this.ctx = this.canvasElem.getContext('2d')
+    this.ctx.imageSmoothingEnabled = true
+    this.canvasWidth = this.canvasElem.width
+    this.canvasHeight = this.canvasElem.height
+    this.backgroundColor = window.getComputedStyle(document.body, null).getPropertyValue('background-color')
+
+    this.curLine = this.canvasHeight / 2
+
+    this.ctx.fillStyle = this.backgroundColor
+    this.ctx.fillRect(0, 0, this.canvasElem.width, this.canvasElem.height)
+
+    this.graduationCanvasElem = settings.graduationCanvasElem
+    this.graduationCtx = this.graduationCanvasElem.getContext('2d')
+
+    this.spectrumCanvasElem = settings.spectrumCanvasElem
+    this.spectrumCtx = this.spectrumCanvasElem.getContext('2d')
+
+    this.spectrumCanvasElem.addEventListener('mousemove', this.spectrumMouseMove.bind(this))
+    this.spectrumCanvasElem.addEventListener('mouseleave', this.spectrumMouseLeave.bind(this))
+
+    this.tempCanvasElem = settings.tempCanvasElem
+    this.tempCtx = this.tempCanvasElem.getContext('2d')
+    this.tempCanvasElem.height = 200
+
+    this.waterfall = true
+
+    let resizeTimeout;
+    let resizeCallback = () => {
+      // Create a new canvas and copy over new canvas
+      let resizeCanvas = document.createElement('canvas')
+      resizeCanvas.width = this.canvasElem.width
+      resizeCanvas.height = this.canvasElem.height
+      let resizeCtx = resizeCanvas.getContext('2d')
+      resizeCtx.drawImage(this.canvasElem, 0, 0)
+
+      this.setCanvasWidth()
+      this.curLine = Math.ceil(this.curLine * this.canvasElem.height / resizeCanvas.height)
+      // Copy resizeCanvas to new canvas with scaling
+      this.ctx.drawImage(resizeCanvas, 0, 0, resizeCanvas.width, resizeCanvas.height, 0, 0, this.canvasElem.width, this.canvasElem.height)
+      this.updateGraduation()
+      this.redrawWaterfall()
+      resizeTimeout = undefined
+    }
+    window.addEventListener('resize', () => {
+      if (resizeTimeout) {
+        clearTimeout(resizeTimeout)
+      }
+      resizeCallback()
+      resizeTimeout = setTimeout(resizeCallback, 250)
+    })
+  }
+
+  configure (settings = {}) {
+    if (!this.canvasElem) {
+      throw new Error('SpectrumWaterfall.initCanvas must be called before configure')
+    }
+    if (!settings.fft_size || !settings.fft_result_size) {
+      throw new Error('SpectrumWaterfall.configure requires fft_size and fft_result_size')
+    }
+
+    this.waterfallMaxSize = settings.fft_result_size
+    this.fftSize = settings.fft_size
+    this.baseFreq = settings.basefreq ?? 0
+    this.sps = settings.sps ?? this.fftSize
+    this.totalBandwidth = settings.total_bandwidth ?? this.sps
+    this.overlap = settings.overlap ?? 0
+
+    this.setCanvasWidth()
+    const waterfallSize = settings.waterfall_size ?? this.waterfallMaxSize
+    this.tempCanvasElem.width = waterfallSize * 2
+
+    this.ctx.fillStyle = this.backgroundColor
+    this.ctx.fillRect(0, 0, this.canvasElem.width, this.canvasElem.height)
+
+    const skipNum = Math.max(1, Math.floor((this.sps / this.fftSize) / 10.0) * 2)
+    const waterfallFPS = (this.sps / this.fftSize) / (skipNum / 2)
+
+    if (this.waterfallDrawInterval !== undefined) {
+      clearInterval(this.waterfallDrawInterval)
+    }
+    this.waterfallDrawInterval = setInterval(() => {
+      this.drawSpectrogram()
+    }, 1000 / waterfallFPS)
+
+    this.waterfallL = 0
+    this.waterfallR = this.waterfallMaxSize
+
+    if (this.waterfallDecoder && this.waterfallDecoder.destroy) {
+      this.waterfallDecoder.destroy()
+    }
+    if (settings.decoder) {
+      this.waterfallDecoder = settings.decoder
+    } else if (settings.waterfall_compression) {
+      this.waterfallDecoder = createWaterfallDecoder(settings.waterfall_compression)
+    } else {
+      this.waterfallDecoder = undefined
+    }
+
+    this.updateGraduation()
+  }
+
+  setCanvasWidth() {
+    let canvasWidth = this.canvasElem.parentElement.clientWidth * window.devicePixelRatio
+
+    this.canvasElem.width = canvasWidth
+
+    this.canvasScale = canvasWidth / 1024
+
+    // Aspect ratio is 1024 to 128px
+    this.spectrumCanvasElem.width = canvasWidth
+    this.spectrumCanvasElem.height = canvasWidth / 1024 * 128
+
+    // Aspect ratio is 1024 to 20px
+    this.graduationCanvasElem.width = canvasWidth
+    this.graduationCanvasElem.height = canvasWidth / 1024 * 20
+
+    this.canvasElem.height = window.outerHeight * window.devicePixelRatio * 2
+    this.canvasWidth = this.canvasElem.width
+    this.canvasHeight = this.canvasElem.height
+  }
+
+  ingestWaterfallBuffer (payload) {
+    if (payload === undefined || payload === null) {
+      return
+    }
+
+    const frames = this.decodePayload(payload)
+    frames.forEach(frame => this.enqueueFrame(frame))
+  }
+
+  decodePayload (payload) {
+    if (payload instanceof ArrayBuffer || ArrayBuffer.isView(payload)) {
+      const view = ArrayBuffer.isView(payload)
+        ? new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength)
+        : new Uint8Array(payload)
+      if (!this.waterfallDecoder) {
+        return [{
+          data: payload instanceof Int8Array ? payload : new Int8Array(view),
+          l: 0,
+          r: this.waterfallMaxSize
+        }]
+      }
+      return this.waterfallDecoder.decode(view)
+    }
+    if (Array.isArray(payload)) {
+      return payload
+    }
+    if (typeof payload === 'object' && payload.data) {
+      return [payload]
+    }
+    throw new Error('Unsupported waterfall payload type')
+  }
+
+  enqueueFrame (frame) {
+    if (this.waterfallMaxSize === undefined) {
+      throw new Error('SpectrumWaterfall.configure must be called before ingesting frames')
+    }
+    if (!frame || !frame.data) {
+      return
+    }
+    const curL = frame.l ?? 0
+    const curR = frame.r ?? this.waterfallMaxSize
+    const data = frame.data instanceof Int8Array ? frame.data : new Int8Array(frame.data)
+
+    this.waterfallQueue.unshift({ data, l: curL, r: curR })
+
+    if (!this.waterfall && !this.spectrum) {
+      this.waterfallQueue.clear()
+      return
+    }
+
+    while (this.waterfallQueue.length > 10) {
+      this.drawSpectrogram()
+    }
+  }
+
+  getMouseX (canvas, evt) {
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = canvas.width / rect.width
+
+    return (evt.clientX - rect.left) * scaleX
+  }
+  
+  transformValue (x) {
+    return Math.min(Math.max(x + this.waterfallColourShift, 0), 255)
+  }
+
+  // Helper functions
+
+  idxToFreq (idx) {
+    return idx / this.waterfallMaxSize * this.totalBandwidth + this.baseFreq
+  }
+
+  idxToCanvasX (idx) {
+    return (idx - this.waterfallL) / (this.waterfallR - this.waterfallL) * this.canvasWidth
+  }
+
+  canvasXtoFreq (x) {
+    const idx = x / this.canvasWidth * (this.waterfallR - this.waterfallL) + this.waterfallL
+    return this.idxToFreq(idx)
+  }
+
+  freqToIdx (freq) {
+    return (freq - this.baseFreq) / (this.totalBandwidth) * this.waterfallMaxSize
+  }
+
+  // Drawing functions
+  calculateOffsets (waterfallArray, curL, curR) {
+    // Correct for zooming or shifting
+    const pxPerIdx = this.canvasWidth / (this.waterfallR - this.waterfallL)
+    const pxL = (curL - this.waterfallL) * pxPerIdx
+    const pxR = (curR - this.waterfallL) * pxPerIdx
+
+    const arr = new Uint8Array(waterfallArray.length)
+    for (let i = 0; i < arr.length; i++) {
+      arr[i] = this.transformValue(waterfallArray[i])
+    }
+    return [arr, pxL, pxR]
+  }
+
+  drawSpectrogram () {
+    
+    if (this.waterfallQueue.length === 0) {
+      return
+    }
+
+    const {data: waterfallArray, l: curL, r: curR} = this.waterfallQueue.pop()
+    
+    const [arr, pxL, pxR] = this.calculateOffsets(waterfallArray, curL, curR)
+    
+    if (this.waterfall) {
+      this.drawWaterfall(arr, pxL, pxR, curL, curR)
+    }
+    if (this.spectrum) {
+      this.drawSpectrum(arr, pxL, pxR, curL, curR)
+    }
+
+    this.drawnWaterfallQueue.unshift([waterfallArray, curL, curR])
+
+    if (this.drawnWaterfallQueue.length > this.canvasHeight) {
+      this.drawnWaterfallQueue.pop()
+    }
+  }
+
+  async redrawWaterfall () {
+    const toDraw = this.drawnWaterfallQueue.toArray()
+    const curLineReset = this.lineResets
+    const curLine = this.curLine
+    const drawLine = (i) => {
+      const toDrawLine = curLine + 1 + i + (this.lineResets - curLineReset) * this.canvasHeight / 2
+
+      const [waterfallArray, curL, curR] = toDraw[i]
+
+      const [arr, pxL, pxR] = this.calculateOffsets(waterfallArray, curL, curR)
+      
+      this.drawWaterfallLine(arr, pxL, pxR, toDrawLine)
+      if (i + 1 < toDraw.length) {
+        this.updateImmediate = setImmediate(() => drawLine(i + 1))
+      }
+    }
+    clearImmediate(this.updateImmediate)
+    if (toDraw.length) {
+      drawLine(0)
+    }
+  }
+
+  drawWaterfallLine (arr, pxL, pxR, line) {
+    // Draw the new line
+    const colorarr = this.ctx.createImageData(arr.length, 1)
+
+    const bmparr = new Uint8Array(arr.length * 4)
+    for (let i = 0; i < arr.length; i++) {
+      colorarr.data.set(this.colormap[arr[i]], i * 4)
+
+      bmparr[i * 4 + 0] = 255
+      bmparr[i * 4 + 1] = this.colormap[arr[i]][2]
+      bmparr[i * 4 + 2] = this.colormap[arr[i]][1]
+      bmparr[i * 4 + 3] = this.colormap[arr[i]][0]
+    }
+  
+    this.tempCtx.putImageData(colorarr, 0, 0)
+    // Resize the line into the correct width
+    this.ctx.drawImage(this.tempCanvasElem, 0, 0, arr.length, 1, pxL, line, pxR - pxL, 1)
+  }
+
+  drawWaterfall (arr, pxL, pxR, curL, curR) {
+    this.drawWaterfallLine(arr, pxL, pxR, this.curLine)
+    
+    // Shift the spectrogram down by 1 pixel
+    //let shift = (this.curLine + 1 - this.canvasHeight / 4);
+    this.canvasElem.style.transform = `translate3d(0, -${this.curLine / window.devicePixelRatio + 1}px, 0)`
+
+    // Once we have reached the start of the canvas, reset to the middle
+    if (this.curLine === 0) {
+      this.ctx.drawImage(this.canvasElem, 0, this.canvasHeight / 2)
+      this.curLine = this.canvasHeight / 2
+      this.lineResets++
+    }
+    this.curLine -= 1
+  }
+
+  drawSpectrum (arr, pxL, pxR, curL, curR) {
+    if (curL !== this.spectrumFiltered[0][0] || curR !== this.spectrumFiltered[0][1]) {
+      this.spectrumFiltered[1] = arr
+      this.spectrumFiltered[0] = [curL, curR]
+    }
+
+    // Smooth the spectrogram with the previous values
+    for (let i = 0; i < arr.length; i++) {
+      this.spectrumFiltered[1][i] = this.spectrumAlpha * arr[i] + (1 - this.spectrumAlpha) * this.spectrumFiltered[1][i]
+    }
+
+    // Take the smoothed value
+    arr = this.spectrumFiltered[1]
+
+    const pixels = (pxR - pxL) / arr.length
+    let scale = this.canvasScale
+
+    arr = arr.map((x) => 255 - x)
+
+    // Blank the screen
+    this.spectrumCtx.clearRect(0, 0, this.spectrumCanvasElem.width, this.spectrumCanvasElem.height)
+    this.spectrumCtx.strokeStyle = 'yellow'
+    this.spectrumCtx.fillStyle = 'yellow'
+
+    // Draw the line
+    this.spectrumCtx.beginPath()
+    this.spectrumCtx.moveTo(pxL, arr[0] / 2 * scale)
+    arr.forEach((x, i) => {
+      this.spectrumCtx.lineTo(pxL + pixels / 2 + i * pixels, x / 2 * scale)
+    })
+    this.spectrumCtx.lineTo(pxR, arr[arr.length - 1] / 2 * scale)
+    this.spectrumCtx.stroke()
+
+    if (this.spectrumFreq) {
+      this.spectrumCtx.fillText((this.spectrumFreq / 1e6).toFixed(8) + ' MHz', 10, 10)
+      this.spectrumCtx.strokeStyle = 'rgba(255, 255, 255, 0.5)'
+      this.spectrumCtx.beginPath()
+      this.spectrumCtx.moveTo(this.spectrumX, 0)
+      this.spectrumCtx.lineTo(this.spectrumX, 128 * scale)
+      this.spectrumCtx.stroke()
+    }
+  }
+
+  updateGraduation () {
+    const freqL = this.idxToFreq(this.waterfallL)
+    const freqR = this.idxToFreq(this.waterfallR)
+    const scale = this.canvasScale
+
+    let graduationSpacing = 1
+
+    // Calculate the scale where at least 20 graduation spacings will be drawn
+    while ((freqR - freqL) / graduationSpacing > 8) {
+      graduationSpacing *= 10
+    }
+    graduationSpacing /= 10
+
+    this.graduationCtx.fillStyle = 'white'
+    this.graduationCtx.strokeStyle = 'white'
+    this.graduationCtx.clearRect(0, 0, this.graduationCanvasElem.width, this.graduationCanvasElem.height)
+
+    // Find the first graduation frequency
+    let freqLStart = freqL
+    if (freqL % graduationSpacing !== 0) {
+      freqLStart = freqL + (graduationSpacing - (freqL % graduationSpacing))
+    }
+
+    // Find the least amount of trailing zeros
+    let minimumTrailingZeros = 5
+    for (let freqStart = freqLStart; freqStart <= freqR; freqStart += graduationSpacing) {
+      if (freqStart != 0) {
+        const trailingZeros = freqStart.toString().match(/0*$/g)[0].length
+        minimumTrailingZeros = Math.min(minimumTrailingZeros, trailingZeros)
+      }
+    }
+    
+    this.graduationCtx.font = `${10 * scale}px Arial`
+    for (; freqLStart <= freqR; freqLStart += graduationSpacing) {
+      // find the middle pixel
+      const middlePixel = (freqLStart - freqL) / (freqR - freqL) * this.canvasWidth
+
+      let lineHeight = 5
+      let printFreq = false
+      if (freqLStart % (graduationSpacing * 10) === 0) {
+        lineHeight = 10
+        printFreq = true
+      } else if (freqLStart % (graduationSpacing * 5) === 0) {
+        lineHeight = 7
+        printFreq = true
+      }
+
+      if (printFreq) {
+        this.graduationCtx.textAlign = 'center'
+        this.graduationCtx.fillText((freqLStart / 1000000).toFixed(6 - minimumTrailingZeros) + ' MHz', middlePixel, 7.5 * scale)
+      }
+      // draw a line in the middle of it
+      this.graduationCtx.lineWidth = 1 * scale
+      this.graduationCtx.beginPath()
+      this.graduationCtx.moveTo(middlePixel, (10 + (10 - lineHeight)) * scale)
+      this.graduationCtx.lineTo(middlePixel, (20) * scale)
+      this.graduationCtx.stroke()
+    }
+
+    this.drawClients()
+  }
+
+  setClients (clients) {
+    this.clients = clients
+  }
+
+  drawClients () {
+    Object.entries(this.clients)
+      .filter(([_, x]) => (x[1] < this.waterfallR && x[1] >= this.waterfallL))
+      .forEach(([id, range]) => {
+        const midOffset = this.idxToCanvasX(range[1])
+        const [r, g, b, a] = this.clientColormap[parseInt(id.substring(0, 2), 16)]
+        this.graduationCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a})`
+        this.graduationCtx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${a})`
+        this.graduationCtx.beginPath()
+        this.graduationCtx.moveTo(midOffset, 0)
+        this.graduationCtx.lineTo(midOffset + 2, 5)
+        this.graduationCtx.stroke()
+        this.graduationCtx.beginPath()
+        this.graduationCtx.moveTo(midOffset, 0)
+        this.graduationCtx.lineTo(midOffset - 2, 5)
+        this.graduationCtx.stroke()
+        // this.graduationCtx.arc(midOffset, 2, 2, 0, 2 * Math.PI, 0)
+        // this.graduationCtx.fill()
+      })
+  }
+
+  setWaterfallRange (waterfallL, waterfallR) {
+    if (waterfallL >= waterfallR) {
+      return
+    }
+    const width = waterfallR - waterfallL
+    // If there is out of bounds, fix the bounds
+    if (waterfallL < 0 && waterfallR > this.waterfallMaxSize) {
+      waterfallL = 0
+      waterfallR = this.waterfallMaxSize
+    } else if (waterfallL < 0) {
+      waterfallL = 0
+      waterfallR = width
+    } else if (waterfallR > this.waterfallMaxSize) {
+      waterfallR = this.waterfallMaxSize
+      waterfallL = waterfallR - width
+    }
+    const prevL = this.waterfallL
+    const prevR = this.waterfallR
+    this.waterfallL = waterfallL
+    this.waterfallR = waterfallR
+    if (typeof this.rangeChangeHandler === 'function') {
+      this.rangeChangeHandler({
+        l: this.waterfallL,
+        r: this.waterfallR
+      })
+    }
+
+    const newCanvasX1 = this.idxToCanvasX(prevL)
+    const newCanvasX2 = this.idxToCanvasX(prevR)
+    const newCanvasWidth = newCanvasX2 - newCanvasX1
+
+    this.ctx.drawImage(this.canvasElem, 0, 0, this.canvasWidth, this.canvasHeight, newCanvasX1, 0, newCanvasWidth, this.canvasHeight)
+
+    // Special case for zoom out or panning, blank the borders
+    if ((prevR - prevL) <= (waterfallR - waterfallL) + 1) {
+      this.ctx.fillStyle = this.backgroundColor
+      this.ctx.fillRect(0, 0, newCanvasX1, this.canvasHeight)
+      this.ctx.fillRect(newCanvasX2, 0, this.canvasWidth - newCanvasX2, this.canvasHeight)
+    }
+    // For responsiveness, drain the entire waterfall queue
+    while (this.waterfallQueue.length > 0) {
+      this.drawSpectrogram()
+    }
+    this.updateGraduation()
+    this.resetRedrawTimeout(500)
+  }
+
+  getWaterfallRange () {
+    return [this.waterfallL, this.waterfallR]
+  }
+
+  setWaterfallLagTime (lagTime) {
+    this.lagTime = Math.max(0, lagTime)
+  }
+
+  setOffset (offset) {
+    this.waterfallColourShift = offset
+    this.resetRedrawTimeout(100)
+  }
+
+  setAlpha (alpha) {
+    this.spectrumAlpha = alpha
+  }
+
+  setColormapArray (colormap) {
+    this.colormap = computeColormapArray(colormap)
+  }
+
+  setColormap (name) {
+    this.setColormapArray(getColormap(name))
+    this.resetRedrawTimeout(50)
+  }
+
+  setUserID (userID) {
+    this.userID = userID
+  }
+
+  setSpectrum (spectrum) {
+    this.spectrum = spectrum
+  }
+
+  setWaterfall (waterfall) {
+    this.waterfall = waterfall
+  }
+
+  resetRedrawTimeout (timeout) {
+    if (this.updateTimeout !== undefined) {
+      clearTimeout(this.updateTimeout)
+    }
+    this.updateTimeout = setTimeout(this.redrawWaterfall.bind(this), timeout)
+  }
+
+  canvasWheel (e) {
+    // For UI to pass custom zoom range
+    const x = (e.coords || { x: this.getMouseX(this.spectrumCanvasElem, e) }).x
+    e.preventDefault()
+
+    const zoomAmount = e.deltaY || e.scale
+    const l = this.waterfallL
+    const r = this.waterfallR
+    // For UI to pass in a custom scale amount
+    const scale = e.scaleAmount || 0.85
+
+    // Prevent zooming beyond a certain point
+    if (r - l <= 128 && zoomAmount < 0) {
+      return false
+    }
+    const centerfreq = (r - l) * x / this.canvasWidth + l
+    let widthL = centerfreq - l
+    let widthR = r - centerfreq
+    if (zoomAmount < 0) {
+      widthL *= scale
+      widthR *= scale
+    } else if (zoomAmount > 0) {
+      widthL *= 1 / scale
+      widthR *= 1 / scale
+    }
+    const waterfallL = Math.round(centerfreq - widthL)
+    const waterfallR = Math.round(centerfreq + widthR)
+
+    this.setWaterfallRange(waterfallL, waterfallR)
+
+    return false
+  }
+
+  mouseMove (e) {
+    // Figure out how much is dragged
+    const mouseMovement = e.movementX
+    const frequencyMovement = Math.round(mouseMovement / this.canvasElem.getBoundingClientRect().width * (this.waterfallR - this.waterfallL))
+
+    if (!frequencyMovement) {
+      return
+    }
+    const newL = this.waterfallL - frequencyMovement
+    const newR = this.waterfallR - frequencyMovement
+    this.setWaterfallRange(newL, newR)
+  }
+
+  spectrumMouseMove (e) {
+    const x = this.getMouseX(this.spectrumCanvasElem, e)
+    const freq = this.canvasXtoFreq(x)
+    this.spectrumFreq = freq
+    this.spectrumX = x
+  }
+
+  spectrumMouseLeave (e) {
+    this.spectrumFreq = undefined
+    this.spectrumX = undefined
+  }
+
+  setRangeChangeHandler (handler) {
+    this.rangeChangeHandler = handler
+  }
+
+  destroy () {
+    if (this.waterfallDrawInterval !== undefined) {
+      clearInterval(this.waterfallDrawInterval)
+      this.waterfallDrawInterval = undefined
+    }
+    if (this.updateTimeout !== undefined) {
+      clearTimeout(this.updateTimeout)
+      this.updateTimeout = undefined
+    }
+    if (this.updateImmediate !== undefined) {
+      clearImmediate(this.updateImmediate)
+      this.updateImmediate = undefined
+    }
+    if (this.waterfallDecoder && this.waterfallDecoder.destroy) {
+      this.waterfallDecoder.destroy()
+      this.waterfallDecoder = undefined
+    }
+    this.waterfallQueue.clear()
+    this.drawnWaterfallQueue.clear()
+  }
+}
