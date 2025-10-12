@@ -1,15 +1,16 @@
 <template>
   <VueGridStackPane title="Goodbye World">
+
+      <SigplotSpectrogram class="spectrogram-pane" ref="spectrogram" />
+
     <template #actions>
-      <v-spacer />
-      <v-btn size="small" variant="text" @click="resetSpectrogram">
+      <v-btn block class="bg-primary" @click="resetSpectrogram">
         Reset
       </v-btn>
     </template>
-    <div class="spectrogram-pane">
-      <SigplotSpectrogram ref="spectrogram" />
-    </div>
-  </VueGridStackPane>
+
+
+</VueGridStackPane>
 </template>
 
 <script setup>
