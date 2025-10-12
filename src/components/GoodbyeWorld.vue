@@ -1,5 +1,11 @@
 <template>
   <VueGridStackPane title="Goodbye World">
+    <template #actions>
+      <v-spacer />
+      <v-btn size="small" variant="text" @click="resetSpectrogram">
+        Reset
+      </v-btn>
+    </template>
     <div class="spectrogram-pane">
       <SigplotSpectrogram ref="spectrogram" />
     </div>
@@ -13,6 +19,11 @@ import SigplotSpectrogram from './SigplotSpectrogram.vue';
 
 const spectrogram = ref(null);
 let intervalId = null;
+
+const resetSpectrogram = () => {
+  spectrogram.value?.reset();
+};
+
 onMounted(() => {
   // Push new random data at 10 Hz
   intervalId = setInterval(() => {
