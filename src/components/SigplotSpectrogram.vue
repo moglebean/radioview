@@ -24,15 +24,25 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  frequencyBinSpacing: {
+    type: Number,
+    default: 100e6 / 2048,
+  },
+  frequencyOffset: {
+    type: Number,
+    default: 0,
+  },
 });
 
 const plotContainer = ref(null);
 let plot = null;
 let rasterLayer = null;
 
-const FS = 44100;
-const FFTSIZE = 2048;
-const XDELTA = FS / FFTSIZE;
+const DEFAULT_SUBSIZE = 1;
+const DEFAULT_BYTES_PER_ELEMENT = 8;
+
+let currentSubsize = null;
+let currentBytesPerElement = DEFAULT_BYTES_PER_ELEMENT;
 
 const PLOT_OPTIONS = {
   autol: 10,
@@ -49,19 +59,6 @@ const PLOT_OPTIONS = {
   autoz: 0,
   zmin: -120,
   zmax: -80
-};
-
-
-
-
-const PIPE_OVERRIDES = {
-  // drawmode: "scrolling",
-  type: 2000, // raster layer type
-  // format: "SF",
-  subsize: FFTSIZE,
-  xdelta: XDELTA,
-  pipesize: (FFTSIZE) * 8,
-  // xunits: 3,
 };
 
 const applyColorAxis = () => {
@@ -82,7 +79,6 @@ const applyColorAxis = () => {
   } else {
     settings.autoz = 3;
   }
-  console.log(settings)
   plot.change_settings(settings);
 };
 
@@ -97,7 +93,18 @@ const applyColorbarVisibility = () => {
   }
 };
 
-const createRasterLayer = () => {
+const buildPipeOverrides = (subsize, bytesPerElement) => ({
+  type: 2000,
+  subsize,
+  xdelta: props.frequencyBinSpacing,
+  xstart: props.frequencyOffset,
+  pipesize: subsize * bytesPerElement,
+});
+
+const createRasterLayer = (
+  requestedSubsize = DEFAULT_SUBSIZE,
+  requestedBytesPerElement = DEFAULT_BYTES_PER_ELEMENT,
+) => {
   if (!plot) {
     return;
   }
@@ -107,10 +114,35 @@ const createRasterLayer = () => {
     rasterLayer = null;
   }
 
+  const effectiveSubsize =
+    Number.isFinite(requestedSubsize) && requestedSubsize > 0
+      ? requestedSubsize
+      : DEFAULT_SUBSIZE;
+  const effectiveBytesPerElement =
+    Number.isFinite(requestedBytesPerElement) && requestedBytesPerElement > 0
+      ? requestedBytesPerElement
+      : DEFAULT_BYTES_PER_ELEMENT;
+
+  currentSubsize = effectiveSubsize;
+  currentBytesPerElement = effectiveBytesPerElement;
+
   // Recreate the raster layer using overlay_pipe API (per SpectricLabs example)
-  rasterLayer = plot.overlay_pipe({ ...PIPE_OVERRIDES });
+  rasterLayer = plot.overlay_pipe(
+    buildPipeOverrides(effectiveSubsize, effectiveBytesPerElement),
+  );
+  const xmin = props.frequencyOffset;
+  const xmax =
+    props.frequencyOffset + props.frequencyBinSpacing * effectiveSubsize;
+  plot.change_settings({
+    xmin,
+    xmax,
+  });
   applyColorAxis();
   applyColorbarVisibility();
+
+
+  console.log(
+    `Created raster layer with subsize=${effectiveSubsize}, bytesPerElement=${effectiveBytesPerElement}, xmin=${xmin}, xmax=${xmax} spacing=${props.frequencyBinSpacing}, offset=${props.frequencyOffset}`,)
 };
 
 onMounted(() => {
@@ -134,12 +166,45 @@ onBeforeUnmount(() => {
 
 defineExpose({
   pushData(frame) {
-    if (plot && rasterLayer != null) {
+    if (!plot) {
+      return;
+    }
+
+    const subsize =
+      typeof frame?.length === "number" && frame.length > 0 ? frame.length : null;
+    const bytesPerElement =
+      typeof frame?.BYTES_PER_ELEMENT === "number"
+        ? frame.BYTES_PER_ELEMENT
+        : DEFAULT_BYTES_PER_ELEMENT;
+
+    if (
+      subsize &&
+      (rasterLayer === null ||
+        currentSubsize !== subsize ||
+        currentBytesPerElement !== bytesPerElement)
+    ) {
+      createRasterLayer(subsize, bytesPerElement);
+    } else if (rasterLayer === null) {
+      createRasterLayer();
+    }
+
+    if (rasterLayer !== null) {
       plot.push(rasterLayer, frame);
     }
   },
   reset() {
-    createRasterLayer();
+    if (!plot) {
+      return;
+    }
+
+    if (rasterLayer !== null) {
+      createRasterLayer(
+        currentSubsize ?? DEFAULT_SUBSIZE,
+        currentBytesPerElement,
+      );
+    } else {
+      createRasterLayer();
+    }
   },
 });
 
@@ -154,6 +219,18 @@ watch(
   () => props.showColorbar,
   () => {
     applyColorbarVisibility();
+  },
+);
+
+watch(
+  () => [props.frequencyBinSpacing, props.frequencyOffset],
+  () => {
+    if (plot && rasterLayer !== null) {
+      createRasterLayer(
+        currentSubsize ?? DEFAULT_SUBSIZE,
+        currentBytesPerElement,
+      );
+    }
   },
 );
 </script>

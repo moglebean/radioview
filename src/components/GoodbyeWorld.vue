@@ -7,7 +7,8 @@
         color-axis-mode="manual"
         :color-axis-min="-120.0"
         :color-axis-max="-80.0"
-
+        :frequency-bin-spacing="100e6/2048"
+        :frequency-offset="25e6"
       />
 
     <template #actions>
@@ -25,6 +26,8 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import VueGridStackPane from './VueGridStackPane.vue';
 import SigplotSpectrogram from './SigplotSpectrogram.vue';
 
+const FRAME_SIZE = 2048;
+
 const spectrogram = ref(null);
 let intervalId = null;
 
@@ -35,8 +38,9 @@ const resetSpectrogram = () => {
 onMounted(() => {
   // Push new random data at 10 Hz
   intervalId = setInterval(() => {
-    const frameSize = 2048;
-    const data = new Float32Array(frameSize).map(() => (Math.random()*10.0 - 100.0));
+    const data = new Float32Array(FRAME_SIZE).map(
+      () => Math.random() * 10.0 - 100.0,
+    );
     spectrogram.value?.pushData(data);
   }, 100); // 10 times per second (100ms)
 });
