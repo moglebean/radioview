@@ -45,6 +45,16 @@
       <v-chip color="success" text-color="white" size="small">
         OK
       </v-chip>
+      <v-switch
+        v-model="isDarkTheme"
+        inset
+        hide-details
+        color="secondary"
+        class="theme-switch"
+        :label="`Theme: ${themeModeLabel}`"
+        :true-value="true"
+        :false-value="false"
+      />
     </v-app-bar>
     <v-divider />
 
@@ -91,6 +101,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
+import { useTheme } from 'vuetify'
 import VueGridStack from './components/VueGridStack.vue'
 import HelloWorldPane from './components/HelloWorldPane.vue'
 import GoodbyeWorld from './components/GoodbyeWorld.vue'
@@ -107,6 +118,16 @@ const savedExpandedRightDrawerWidth = ref(DEFAULT_RIGHT_DRAWER_WIDTH)
 const isResizingRightDrawer = ref(false)
 const resizeStartX = ref(0)
 const resizeStartWidth = ref(RIGHT_RAIL_WIDTH)
+const theme = useTheme()
+
+const isDarkTheme = computed({
+  get: () => theme.global.current.value.dark,
+  set: (value) => {
+    theme.global.name.value = value ? 'dark' : 'light'
+  },
+})
+
+const themeModeLabel = computed(() => (isDarkTheme.value ? 'Dark' : 'Light'))
 
 const expandRightDrawer = () => {
   rightRail.value = false
@@ -290,5 +311,9 @@ const addRightHelloPane = () => {
 
 .right-grid-stack :deep(.grid-stack-item-content) {
   min-height: auto;
+}
+
+.theme-switch {
+  margin-left: 16px;
 }
 </style>

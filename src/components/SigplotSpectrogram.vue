@@ -3,8 +3,9 @@
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import sigplot from "sigplot";
+import { useTheme } from "vuetify";
 
 const props = defineProps({
   colorAxisMode: {
@@ -48,11 +49,20 @@ const props = defineProps({
     default: "vertical",
     validator: (value) => ["horizontal", "vertical"].includes(value),
   },
+  plotBackgroundColor: {
+    type: String,
+    default: null,
+  },
+  plotForegroundColor: {
+    type: String,
+    default: null,
+  },
 });
 
 const plotContainer = ref(null);
 let plot = null;
 let rasterLayer = null;
+const theme = useTheme();
 
 const DEFAULT_COMPRESSION = "max";
 const DEFAULT_SUBSIZE = 1;
@@ -64,12 +74,24 @@ let lastDrawMode = null;
 let lastDrawDirection = null;
 let lastInvalidComboKey = null;
 
-const PLOT_OPTIONS = {
+const resolveThemeColor = (key, fallback) => {
+  const colors = theme.current.value.colors ?? {};
+  console.log("colors", colors);
+  return colors[key] ?? fallback;
+};
+
+const resolvedBackgroundColor = computed(
+  () => props.plotBackgroundColor ?? resolveThemeColor("background", "#051116"),
+);
+
+const resolvedForegroundColor = computed(
+  () =>
+    props.plotForegroundColor ??
+    resolveThemeColor("on-background", resolveThemeColor("on-surface", "#000")),
+);
+
+const BASE_PLOT_OPTIONS = {
   autol: 10,
-  colors: {
-    bg: "#051116",
-    fg: "#FFF",
-  },
   font_family: "Montserrat",
   font_width: 12,
   autohide_panbars: true,
@@ -285,15 +307,35 @@ const createRasterLayer = (
   );
 };
 
+const applyPlotColors = () => {
+  if (!plot) {
+    return;
+  }
+
+  plot.change_settings({
+    colors: {
+      bg: resolvedBackgroundColor.value,
+      fg: resolvedForegroundColor.value,
+    },
+  });
+};
+
 onMounted(() => {
   if (!plotContainer.value) {
     return;
   }
 
   // Create the SigPlot instance
-  plot = new sigplot.Plot(plotContainer.value, PLOT_OPTIONS);
+  plot = new sigplot.Plot(plotContainer.value, {
+    ...BASE_PLOT_OPTIONS,
+    colors: {
+      bg: resolvedBackgroundColor.value,
+      fg: resolvedForegroundColor.value,
+    },
+  });
 
   createRasterLayer();
+  applyPlotColors();
 });
 
 onBeforeUnmount(() => {
@@ -363,6 +405,13 @@ watch(
 );
 
 watch(
+  () => [resolvedBackgroundColor.value, resolvedForegroundColor.value],
+  () => {
+    applyPlotColors();
+  },
+);
+
+watch(
   () => props.drawMode,
   () => {
     applyDrawSettings();
@@ -411,6 +460,6 @@ watch(
 .sigplot-container {
   width: 100%;
   height: 400px;
-  border: 1px solid #ccc;
+  /* border: 1px solid #ccc; */
 }
 </style>
