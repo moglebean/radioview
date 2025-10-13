@@ -9,6 +9,8 @@
         :color-axis-max="-80.0"
         :frequency-bin-spacing="100e6/2048"
         :frequency-offset="25e6"
+        draw-mode="falling"
+        draw-direction="vertical"
       />
 
     <template #actions>
@@ -25,6 +27,10 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import VueGridStackPane from './VueGridStackPane.vue';
 import SigplotSpectrogram from './SigplotSpectrogram.vue';
+
+const props = defineProps({
+  
+});
 
 const FRAME_SIZE = 2048;
 

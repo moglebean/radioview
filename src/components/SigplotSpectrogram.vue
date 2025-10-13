@@ -32,6 +32,16 @@ const props = defineProps({
     type: Number,
     default: 0,
   },
+  drawMode: {
+    type: String,
+    default: "scrolling",
+    validator: (value) => ["scrolling", "rising", "falling"].includes(value),
+  },
+  drawDirection: {
+    type: String,
+    default: "vertical",
+    validator: (value) => ["horizontal", "vertical"].includes(value),
+  },
 });
 
 const plotContainer = ref(null);
@@ -43,6 +53,9 @@ const DEFAULT_BYTES_PER_ELEMENT = 8;
 
 let currentSubsize = null;
 let currentBytesPerElement = DEFAULT_BYTES_PER_ELEMENT;
+let lastDrawMode = null;
+let lastDrawDirection = null;
+let lastInvalidComboKey = null;
 
 const PLOT_OPTIONS = {
   autol: 10,
@@ -93,6 +106,64 @@ const applyColorbarVisibility = () => {
   }
 };
 
+const getEffectiveDrawSettings = () => {
+  const drawdirection =
+    typeof props.drawDirection === "string" ? props.drawDirection : "vertical";
+  const requestedDrawMode =
+    typeof props.drawMode === "string" ? props.drawMode : "scrolling";
+  const invalidCombo =
+    drawdirection === "horizontal" && requestedDrawMode !== "scrolling";
+
+  return {
+    drawmode: invalidCombo ? "scrolling" : requestedDrawMode,
+    drawdirection,
+    invalidCombo,
+    requestedDrawMode,
+  };
+};
+
+const warnInvalidCombination = (invalidCombo, requestedDrawMode, drawdirection) => {
+  if (!invalidCombo) {
+    lastInvalidComboKey = null;
+    return;
+  }
+
+  const key = `${requestedDrawMode}-${drawdirection}`;
+  if (lastInvalidComboKey !== key) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[SigplotSpectrogram] drawMode "${requestedDrawMode}" is not supported with drawDirection "${drawdirection}". Falling back to "scrolling".`,
+    );
+    lastInvalidComboKey = key;
+  }
+};
+
+const applyDrawSettings = () => {
+  if (!plot) {
+    return;
+  }
+
+  const {
+    drawmode,
+    drawdirection,
+    invalidCombo,
+    requestedDrawMode,
+  } = getEffectiveDrawSettings();
+
+  warnInvalidCombination(invalidCombo, requestedDrawMode, drawdirection);
+
+  if (drawmode === lastDrawMode && drawdirection === lastDrawDirection) {
+    return;
+  }
+  lastDrawMode = drawmode;
+  lastDrawDirection = drawdirection;
+
+  plot.change_settings({
+    drawmode,
+    drawdirection,
+  });
+};
+
 const buildPipeOverrides = (subsize, bytesPerElement) => ({
   type: 2000,
   subsize,
@@ -100,6 +171,39 @@ const buildPipeOverrides = (subsize, bytesPerElement) => ({
   xstart: props.frequencyOffset,
   pipesize: subsize * bytesPerElement,
 });
+
+const applyAxisSettings = (effectiveSubsize) => {
+  if (!plot) {
+    return;
+  }
+
+  const Gx = plot._Gx ?? {};
+  const { drawdirection } = getEffectiveDrawSettings();
+  const resolvedSubsize =
+    Number.isFinite(effectiveSubsize) && effectiveSubsize > 0
+      ? effectiveSubsize
+      : currentSubsize ?? DEFAULT_SUBSIZE;
+
+  const min = props.frequencyOffset;
+  const max = props.frequencyOffset + props.frequencyBinSpacing * resolvedSubsize;
+
+  const settings = {};
+  if (drawdirection === "horizontal") {
+    if (Gx.ymin !== min || Gx.ymax !== max) {
+      settings.ymin = min;
+      settings.ymax = max;
+    }
+  } else {
+    if (Gx.xmin !== min || Gx.xmax !== max) {
+      settings.xmin = min;
+      settings.xmax = max;
+    }
+  }
+
+  if (Object.keys(settings).length > 0) {
+    plot.change_settings(settings);
+  }
+};
 
 const createRasterLayer = (
   requestedSubsize = DEFAULT_SUBSIZE,
@@ -123,26 +227,35 @@ const createRasterLayer = (
       ? requestedBytesPerElement
       : DEFAULT_BYTES_PER_ELEMENT;
 
+  const {
+    drawmode,
+    drawdirection,
+    invalidCombo,
+    requestedDrawMode,
+  } = getEffectiveDrawSettings();
+
+  warnInvalidCombination(invalidCombo, requestedDrawMode, drawdirection);
+
   currentSubsize = effectiveSubsize;
   currentBytesPerElement = effectiveBytesPerElement;
+  lastDrawMode = drawmode;
+  lastDrawDirection = drawdirection;
 
   // Recreate the raster layer using overlay_pipe API (per SpectricLabs example)
   rasterLayer = plot.overlay_pipe(
     buildPipeOverrides(effectiveSubsize, effectiveBytesPerElement),
+    {
+      drawmode,
+      drawdirection,
+    },
   );
-  const xmin = props.frequencyOffset;
-  const xmax =
-    props.frequencyOffset + props.frequencyBinSpacing * effectiveSubsize;
-  plot.change_settings({
-    xmin,
-    xmax,
-  });
   applyColorAxis();
   applyColorbarVisibility();
-
+  applyAxisSettings(effectiveSubsize);
 
   console.log(
-    `Created raster layer with subsize=${effectiveSubsize}, bytesPerElement=${effectiveBytesPerElement}, xmin=${xmin}, xmax=${xmax} spacing=${props.frequencyBinSpacing}, offset=${props.frequencyOffset}`,)
+    `Created raster layer with subsize=${effectiveSubsize}, bytesPerElement=${effectiveBytesPerElement}, drawmode=${drawmode}, drawdirection=${drawdirection}, spacing=${props.frequencyBinSpacing}, offset=${props.frequencyOffset}`,
+  );
 };
 
 onMounted(() => {
@@ -219,6 +332,26 @@ watch(
   () => props.showColorbar,
   () => {
     applyColorbarVisibility();
+  },
+);
+
+watch(
+  () => props.drawMode,
+  () => {
+    applyDrawSettings();
+    applyAxisSettings();
+  },
+);
+
+watch(
+  () => props.drawDirection,
+  () => {
+    if (plot) {
+      createRasterLayer(
+        currentSubsize ?? DEFAULT_SUBSIZE,
+        currentBytesPerElement,
+      );
+    }
   },
 );
 
