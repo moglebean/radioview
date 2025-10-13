@@ -81,7 +81,7 @@ const resolveThemeColor = (key, fallback) => {
 };
 
 const resolvedBackgroundColor = computed(
-  () => props.plotBackgroundColor ?? resolveThemeColor("background", "#051116"),
+  () => props.plotBackgroundColor ?? resolveThemeColor("surface", "#051116"),
 );
 
 const resolvedForegroundColor = computed(
