@@ -3,8 +3,28 @@
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount, ref } from "vue";
+import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import sigplot from "sigplot";
+
+const props = defineProps({
+  colorAxisMode: {
+    type: String,
+    default: "auto",
+    validator: (value) => ["auto", "manual"].includes(value),
+  },
+  colorAxisMin: {
+    type: Number,
+    default: null,
+  },
+  colorAxisMax: {
+    type: Number,
+    default: null,
+  },
+  showColorbar: {
+    type: Boolean,
+    default: false,
+  },
+});
 
 const plotContainer = ref(null);
 let plot = null;
@@ -15,7 +35,7 @@ const FFTSIZE = 2048;
 const XDELTA = FS / FFTSIZE;
 
 const PLOT_OPTIONS = {
-  autol: 3,
+  autol: 10,
   colors: {
     bg: "#051116",
     fg: "#FFF",
@@ -26,16 +46,55 @@ const PLOT_OPTIONS = {
   autohide_readout: true,
   no_legend_button: true,
   nodragdrop: true,
-  cmode: "LO",
+  autoz: 0,
+  zmin: -120,
+  zmax: -80
 };
 
+
+
+
 const PIPE_OVERRIDES = {
+  // drawmode: "scrolling",
   type: 2000, // raster layer type
-  format: "CF",
-  subsize: FFTSIZE / 2,
+  // format: "SF",
+  subsize: FFTSIZE,
   xdelta: XDELTA,
-  pipesize: (FFTSIZE / 2) * 8,
-  xunits: 3,
+  pipesize: (FFTSIZE) * 8,
+  // xunits: 3,
+};
+
+const applyColorAxis = () => {
+  if (!plot) {
+    return;
+  }
+
+  const settings = {};
+
+  if (props.colorAxisMode === "manual") {
+    settings.autoz = 0;
+    if (props.colorAxisMin != null) {
+      settings.zmin = props.colorAxisMin;
+    }
+    if (props.colorAxisMax != null) {
+      settings.zmax = props.colorAxisMax;
+    }
+  } else {
+    settings.autoz = 3;
+  }
+  console.log(settings)
+  plot.change_settings(settings);
+};
+
+const applyColorbarVisibility = () => {
+  if (!plot) {
+    return;
+  }
+
+  const current = plot._Gx?.lg_colorbar ?? false;
+  if (props.showColorbar !== current) {
+    plot.change_settings({ lg_colorbar: true });
+  }
 };
 
 const createRasterLayer = () => {
@@ -50,6 +109,8 @@ const createRasterLayer = () => {
 
   // Recreate the raster layer using overlay_pipe API (per SpectricLabs example)
   rasterLayer = plot.overlay_pipe({ ...PIPE_OVERRIDES });
+  applyColorAxis();
+  applyColorbarVisibility();
 };
 
 onMounted(() => {
@@ -81,6 +142,20 @@ defineExpose({
     createRasterLayer();
   },
 });
+
+watch(
+  () => [props.colorAxisMode, props.colorAxisMin, props.colorAxisMax],
+  () => {
+    applyColorAxis();
+  },
+);
+
+watch(
+  () => props.showColorbar,
+  () => {
+    applyColorbarVisibility();
+  },
+);
 </script>
 
 <style scoped>

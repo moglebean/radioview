@@ -1,7 +1,14 @@
 <template>
   <VueGridStackPane title="Goodbye World">
 
-      <SigplotSpectrogram class="spectrogram-pane" ref="spectrogram" />
+      <SigplotSpectrogram
+        class="spectrogram-pane"
+        ref="spectrogram"
+        color-axis-mode="manual"
+        :color-axis-min="-120.0"
+        :color-axis-max="-80.0"
+
+      />
 
     <template #actions>
       <v-btn block class="bg-primary" @click="resetSpectrogram">
@@ -28,8 +35,8 @@ const resetSpectrogram = () => {
 onMounted(() => {
   // Push new random data at 10 Hz
   intervalId = setInterval(() => {
-    const frameSize = 512;
-    const data = new Float32Array(frameSize).map(() => Math.random() * 2 - 1);
+    const frameSize = 2048;
+    const data = new Float32Array(frameSize).map(() => (Math.random()*10.0 - 100.0));
     spectrogram.value?.pushData(data);
   }, 100); // 10 times per second (100ms)
 });
