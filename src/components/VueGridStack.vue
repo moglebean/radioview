@@ -693,4 +693,14 @@ defineExpose({
   flex: 1 1 auto;
 }
 
+:deep(.ui-resizable-se),
+:deep(.ui-resizable-sw) {
+  opacity: 0 !important;
+}
+
+:deep(.ui-resizable-se) {
+  bottom: -5px !important;
+  right: -5px !important;
+}
+
 </style>
