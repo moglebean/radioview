@@ -11,6 +11,7 @@
         :frequency-offset="25e6"
         draw-mode="falling"
         draw-direction="vertical"
+        compression="max"
       />
 
     <template #actions>
@@ -47,6 +48,7 @@ onMounted(() => {
     const data = new Float32Array(FRAME_SIZE).map(
       () => Math.random() * 10.0 - 100.0,
     );
+    data[1022] = -50;
     spectrogram.value?.pushData(data);
   }, 100); // 10 times per second (100ms)
 });

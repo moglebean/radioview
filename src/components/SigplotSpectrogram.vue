@@ -12,6 +12,12 @@ const props = defineProps({
     default: "auto",
     validator: (value) => ["auto", "manual"].includes(value),
   },
+  compression: {
+    type: String,
+    default: "max",
+    validator: (value) =>
+      ["decimate", "avg", "min", "max", "maxabs"].includes(value),
+  },
   colorAxisMin: {
     type: Number,
     default: null,
@@ -48,6 +54,7 @@ const plotContainer = ref(null);
 let plot = null;
 let rasterLayer = null;
 
+const DEFAULT_COMPRESSION = "max";
 const DEFAULT_SUBSIZE = 1;
 const DEFAULT_BYTES_PER_ELEMENT = 8;
 
@@ -73,6 +80,18 @@ const PLOT_OPTIONS = {
   zmin: -120,
   zmax: -80
 };
+
+const COMPRESSION_TO_XCMP = {
+  decimate: "smooth",
+  avg: "avg",
+  min: "min",
+  max: "max",
+  maxabs: "maxabs",
+};
+
+const resolveXcmp = () =>
+  COMPRESSION_TO_XCMP[props.compression] ??
+  COMPRESSION_TO_XCMP[DEFAULT_COMPRESSION];
 
 const applyColorAxis = () => {
   if (!plot) {
@@ -247,6 +266,7 @@ const createRasterLayer = (
     {
       drawmode,
       drawdirection,
+      xcmp: resolveXcmp(),
     },
   );
   applyColorAxis();
@@ -345,6 +365,18 @@ watch(
 
 watch(
   () => props.drawDirection,
+  () => {
+    if (plot) {
+      createRasterLayer(
+        currentSubsize ?? DEFAULT_SUBSIZE,
+        currentBytesPerElement,
+      );
+    }
+  },
+);
+
+watch(
+  () => props.compression,
   () => {
     if (plot) {
       createRasterLayer(
