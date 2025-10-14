@@ -14,9 +14,9 @@
         draw-direction="vertical"
         compression="max"
         :disable-default-click-behavior="true"
-        @click.left="handleLeftClick"
+        @click="handleLeftClick"
         @click.right="handleRightClick"
-        @mousedown="handleMouseDown"
+        @mousedown.right="handleMouseDown"
         @mouseenter="handleMouseEnter"
         @mouseleave="handleMouseLeave"
         @contextmenu="handleContextMenu"
@@ -73,7 +73,9 @@ const handleRightClick = (event) => {
 };
 
 const handleMouseDown = (event) => {
-  if (event?.button === 0 && event?.ctrlKey) {
+  if (event?.button === 2) {
+    logEvent('Right down', event);
+  } else if (event?.button === 0 && event?.ctrlKey) {
     logEvent('Ctrl+Left down', event);
   } else if (event?.button === 0) {
     logEvent('Left down', event);

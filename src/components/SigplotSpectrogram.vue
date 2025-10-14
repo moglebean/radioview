@@ -271,10 +271,17 @@ const buildMousePayload = (event, type) => {
       ? resolveZValue(dataX, dataY)
       : null;
 
+  const derivedWhich =
+    typeof event?.which === "number"
+      ? event.which
+      : typeof originalEvent?.which === "number"
+        ? originalEvent.which
+        : null;
+
   const button =
     typeof originalEvent?.button === "number"
       ? originalEvent.button
-      : mapWhichToButton(event?.which);
+      : mapWhichToButton(derivedWhich);
 
   const payload = {
     type,
@@ -291,19 +298,21 @@ const buildMousePayload = (event, type) => {
     buttons:
       typeof originalEvent?.buttons === "number"
         ? originalEvent.buttons
-        : button === null
-          ? 0
-          : 1 << button,
+        : typeof event?.buttons === "number"
+          ? event.buttons
+          : button === null
+            ? 0
+            : 1 << button,
     which:
       typeof event?.which === "number"
         ? event.which
         : typeof originalEvent?.which === "number"
           ? originalEvent.which
           : null,
-    altKey: !!originalEvent?.altKey,
-    ctrlKey: !!originalEvent?.ctrlKey,
-    metaKey: !!originalEvent?.metaKey,
-    shiftKey: !!(originalEvent?.shiftKey ?? event?.shift),
+    altKey: !!(event?.altKey ?? originalEvent?.altKey),
+    ctrlKey: !!(event?.ctrlKey ?? originalEvent?.ctrlKey),
+    metaKey: !!(event?.metaKey ?? originalEvent?.metaKey),
+    shiftKey: !!(event?.shiftKey ?? originalEvent?.shiftKey ?? event?.shift),
     nativeEvent: originalEvent,
     preventDefault: () => {
       if (typeof event?.preventDefault === "function") {
