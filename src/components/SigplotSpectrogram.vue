@@ -72,7 +72,6 @@ const emit = defineEmits([
   "mouseup",
   "click",
   "dblclick",
-  "contextmenu",
   "mouseenter",
   "mouseleave",
   "wheel",
@@ -132,8 +131,30 @@ const isPixelWithinPlotArea = (x, y) => {
   );
 };
 
-const isEventInsidePlot = (event) =>
-  isPixelWithinPlotArea(event?.xpos, event?.ypos);
+const isEventInsidePlot = (event) => {
+  const metrics = getPlotMetrics();
+  if (!metrics) {
+    return false;
+  }
+
+  const originalEvent = event?.originalEvent ?? event ?? null;
+  const candidates = [];
+
+  if (isFiniteNumber(event?.xpos) && isFiniteNumber(event?.ypos)) {
+    candidates.push({ x: event.xpos, y: event.ypos });
+  }
+
+  if (metrics.canvas && originalEvent) {
+    const rect = metrics.canvas.getBoundingClientRect();
+    const x = originalEvent.clientX - rect.left;
+    const y = originalEvent.clientY - rect.top;
+    if (isFiniteNumber(x) && isFiniteNumber(y)) {
+      candidates.push({ x, y });
+    }
+  }
+
+  return candidates.some(({ x, y }) => isPixelWithinPlotArea(x, y));
+};
 
 const resolveZValue = (x, y) => {
   if (!isFiniteNumber(x) || !isFiniteNumber(y)) {
@@ -209,29 +230,40 @@ const mapWhichToButton = (which) => {
   }
 };
 
-const resolvePixelPosition = (event, originalEvent) => {
-  if (isFiniteNumber(event?.xpos) && isFiniteNumber(event?.ypos)) {
-    return { x: event.xpos, y: event.ypos };
-  }
-
+const resolvePixelPosition = (event) => {
   const metrics = getPlotMetrics();
   const canvas = metrics?.canvas;
+  const originalEvent = event?.originalEvent ?? event ?? null;
+  const candidates = [];
+
+  if (isFiniteNumber(event?.xpos) && isFiniteNumber(event?.ypos)) {
+    candidates.push({ x: event.xpos, y: event.ypos });
+  }
 
   if (canvas && originalEvent) {
     const rect = canvas.getBoundingClientRect();
     const x = originalEvent.clientX - rect.left;
     const y = originalEvent.clientY - rect.top;
     if (isFiniteNumber(x) && isFiniteNumber(y)) {
-      return { x, y };
+      candidates.push({ x, y });
     }
   }
 
-  return { x: null, y: null };
+  if (candidates.length === 0) {
+    return { x: null, y: null };
+  }
+
+  const inside = candidates.find(({ x, y }) => isPixelWithinPlotArea(x, y));
+  if (inside) {
+    return inside;
+  }
+
+  return candidates[0];
 };
 
 const buildMousePayload = (event, type) => {
   const originalEvent = event?.originalEvent ?? event ?? null;
-  const pixel = resolvePixelPosition(event, originalEvent);
+  const pixel = resolvePixelPosition(event);
   const dataX = isFiniteNumber(event?.x) ? event.x : null;
   const dataY = isFiniteNumber(event?.y) ? event.y : null;
   const zValue =
@@ -390,9 +422,6 @@ const handleMouseUp = (event) => {
   lastMousePayload = payload;
   emit("mouseup", payload);
 
-  if (payload.button === 2 || payload.which === 3) {
-    emit("contextmenu", cloneMousePayloadWithType(payload, "contextmenu"));
-  }
 };
 
 const handleMouseClick = (event) => {

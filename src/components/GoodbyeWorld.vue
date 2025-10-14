@@ -14,6 +14,8 @@
         draw-direction="vertical"
         compression="max"
         :disable-default-click-behavior="true"
+        @click.left="handleLeftClick"
+        @click.right="handleRightClick"
         @mousedown="handleMouseDown"
         @mouseenter="handleMouseEnter"
         @mouseleave="handleMouseLeave"
@@ -62,17 +64,19 @@ const resetSpectrogram = () => {
   spectrogram.value?.reset();
 };
 
-const handleMouseDown = (event) => {
-  if (event?.button === 0 && event?.ctrlKey) {
-    logEvent('Ctrl+Left click', event);
-  } else if (event?.button === 0) {
-    logEvent('Left click', event);
-  }
+const handleLeftClick = (event) => {
+    logEvent("Left click", event);
 };
 
-const handleContextMenu = (event) => {
-  if (event?.button === 2) {
-    logEvent('Right click', event);
+const handleRightClick = (event) => {
+    logEvent("Right click", event);
+};
+
+const handleMouseDown = (event) => {
+  if (event?.button === 0 && event?.ctrlKey) {
+    logEvent('Ctrl+Left down', event);
+  } else if (event?.button === 0) {
+    logEvent('Left down', event);
   }
 };
 
