@@ -7,6 +7,7 @@
         color-axis-mode="manual"
         :color-axis-min="-120.0"
         :color-axis-max="-80.0"
+        colormap="Greyscale"
         :frequency-bin-spacing="100e6/2048"
         :frequency-offset="25e6"
         draw-mode="falling"

@@ -27,6 +27,13 @@ const props = defineProps({
     type: Number,
     default: null,
   },
+  colormap: {
+    type: String,
+    default: "Greyscale",
+    validator: (value) =>
+      value == null ||
+      ["Greyscale","Ramp Colormap","Color Wheel","Spectrum","calewhite","HotDesat","Sunset","Hot","Cold","Purple","BuGn","YlOrBl","YlGnBl","YlOrRed","GreyNRed"].includes(value),
+  },
   showColorbar: {
     type: Boolean,
     default: false,
@@ -73,6 +80,7 @@ let currentBytesPerElement = DEFAULT_BYTES_PER_ELEMENT;
 let lastDrawMode = null;
 let lastDrawDirection = null;
 let lastInvalidComboKey = null;
+let lastColormapSelection = undefined;
 
 const resolveThemeColor = (key, fallback) => {
   const colors = theme.current.value.colors ?? {};
@@ -121,6 +129,51 @@ const COMPRESSION_TO_XCMP = {
 const resolveXcmp = () =>
   COMPRESSION_TO_XCMP[props.compression] ??
   COMPRESSION_TO_XCMP[DEFAULT_COMPRESSION];
+
+const getColormapIndex = (name) => {
+  if (typeof name !== "string") {
+    return null;
+  }
+
+  const colormaps = sigplot?.m?.Mc?.colormap;
+  if (!Array.isArray(colormaps)) {
+    return null;
+  }
+
+  const index = colormaps.findIndex((entry) => entry?.name === name);
+  return index >= 0 ? index : null;
+};
+
+const applyColormap = () => {
+  if (!plot) {
+    return;
+  }
+
+  const desiredSelection = props.colormap ?? null;
+  if (desiredSelection === lastColormapSelection) {
+    return;
+  }
+
+  if (desiredSelection === null) {
+    plot.change_settings({ cmap: null });
+    lastColormapSelection = null;
+    return;
+  }
+
+  const index = getColormapIndex(desiredSelection);
+  if (index === null) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[SigplotSpectrogram] Unknown colormap "${desiredSelection}". Falling back to default.`,
+    );
+    plot.change_settings({ cmap: null });
+    lastColormapSelection = null;
+    return;
+  }
+
+  plot.change_settings({ cmap: index });
+  lastColormapSelection = desiredSelection;
+};
 
 const applyColorAxis = () => {
   if (!plot) {
@@ -301,6 +354,7 @@ const createRasterLayer = (
   applyColorAxis();
   applyColorbarVisibility();
   applyAxisSettings(effectiveSubsize);
+  applyColormap();
 
   console.log(
     `Created raster layer with subsize=${effectiveSubsize}, bytesPerElement=${effectiveBytesPerElement}, drawmode=${drawmode}, drawdirection=${drawdirection}, spacing=${props.frequencyBinSpacing}, offset=${props.frequencyOffset}`,
@@ -336,6 +390,7 @@ onMounted(() => {
 
   createRasterLayer();
   applyPlotColors();
+  applyColormap();
 });
 
 onBeforeUnmount(() => {
@@ -401,6 +456,12 @@ watch(
   () => props.showColorbar,
   () => {
     applyColorbarVisibility();
+  },
+);
+watch(
+  () => props.colormap,
+  () => {
+    applyColormap();
   },
 );
 
