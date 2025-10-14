@@ -64,12 +64,36 @@ const props = defineProps({
     type: String,
     default: null,
   },
+  disableDefaultClickBehavior: {
+    type: Boolean,
+    default: false,
+  },
 });
+
+const emit = defineEmits([
+  "mousedown",
+  "mousemove",
+  "mouseup",
+  "click",
+  "dblclick",
+  "contextmenu",
+  "mouseenter",
+  "mouseleave",
+  "wheel",
+  "zoom",
+  "unzoom",
+]);
 
 const plotContainer = ref(null);
 let plot = null;
 let rasterLayer = null;
 const theme = useTheme();
+
+const plotEventListeners = [];
+const domEventListeners = [];
+let pointerInsidePlotArea = false;
+let lastMousePayload = null;
+const wheelListenerOptions = { passive: false };
 
 const DEFAULT_COMPRESSION = "max";
 const DEFAULT_SUBSIZE = 1;
@@ -81,6 +105,456 @@ let lastDrawMode = null;
 let lastDrawDirection = null;
 let lastInvalidComboKey = null;
 let lastColormapSelection = undefined;
+
+const getRasterLayer = () => {
+  if (!plot || rasterLayer === null) {
+    return null;
+  }
+  try {
+    return plot.get_layer(rasterLayer);
+  } catch (error) {
+    return null;
+  }
+};
+
+const getPlotMetrics = () => (plot ? plot._Mx ?? null : null);
+
+const isFiniteNumber = (value) =>
+  typeof value === "number" && Number.isFinite(value);
+
+const isPixelWithinPlotArea = (x, y) => {
+  const metrics = getPlotMetrics();
+  if (!metrics || !isFiniteNumber(x) || !isFiniteNumber(y)) {
+    return false;
+  }
+
+  return (
+    x >= metrics.l &&
+    x <= metrics.r &&
+    y >= metrics.t &&
+    y <= metrics.b
+  );
+};
+
+const isEventInsidePlot = (event) =>
+  isPixelWithinPlotArea(event?.xpos, event?.ypos);
+
+const resolveZValue = (x, y) => {
+  if (!isFiniteNumber(x) || !isFiniteNumber(y)) {
+    return null;
+  }
+
+  const layer = getRasterLayer();
+  if (!layer) {
+    return null;
+  }
+
+  if (typeof layer.get_z === "function") {
+    try {
+      const z = layer.get_z(x, y);
+      if (isFiniteNumber(z)) {
+        return z;
+      }
+    } catch (error) {
+      // Layer may not support direct get_z for provided coordinates
+    }
+  }
+
+  const hcb = layer.hcb ?? {};
+  const xdelta = isFiniteNumber(hcb.xdelta) ? hcb.xdelta : layer.xdelta;
+  const ydelta = isFiniteNumber(hcb.ydelta) ? hcb.ydelta : layer.ydelta;
+  const xstart = isFiniteNumber(hcb.xstart) ? hcb.xstart : layer.xstart ?? 0;
+  const ystart = isFiniteNumber(hcb.ystart) ? hcb.ystart : layer.ystart ?? 0;
+  const subsize = Number.isInteger(hcb.subsize) ? hcb.subsize : layer?.hcb?.subsize;
+  const zbuf = layer.zbuf;
+
+  if (
+    !isFiniteNumber(xdelta) ||
+    xdelta === 0 ||
+    !isFiniteNumber(ydelta) ||
+    ydelta === 0 ||
+    !Number.isInteger(subsize) ||
+    subsize <= 0 ||
+    (!Array.isArray(zbuf) &&
+      !(zbuf instanceof Float32Array) &&
+      !(zbuf instanceof Float64Array))
+  ) {
+    return null;
+  }
+
+  const xIndex = Math.floor((x - xstart) / xdelta);
+  const yIndex = Math.floor((y - ystart) / ydelta);
+  const width = subsize;
+
+  if (xIndex < 0 || xIndex >= width || yIndex < 0) {
+    return null;
+  }
+
+  const height = width > 0 ? Math.floor(zbuf.length / width) : 0;
+  if (height > 0 && yIndex >= height) {
+    return null;
+  }
+
+  const dataIndex = yIndex * width + xIndex;
+  const value = zbuf[dataIndex];
+  return isFiniteNumber(value) ? value : null;
+};
+
+const mapWhichToButton = (which) => {
+  switch (which) {
+    case 1:
+      return 0;
+    case 2:
+      return 1;
+    case 3:
+      return 2;
+    default:
+      return null;
+  }
+};
+
+const resolvePixelPosition = (event, originalEvent) => {
+  if (isFiniteNumber(event?.xpos) && isFiniteNumber(event?.ypos)) {
+    return { x: event.xpos, y: event.ypos };
+  }
+
+  const metrics = getPlotMetrics();
+  const canvas = metrics?.canvas;
+
+  if (canvas && originalEvent) {
+    const rect = canvas.getBoundingClientRect();
+    const x = originalEvent.clientX - rect.left;
+    const y = originalEvent.clientY - rect.top;
+    if (isFiniteNumber(x) && isFiniteNumber(y)) {
+      return { x, y };
+    }
+  }
+
+  return { x: null, y: null };
+};
+
+const buildMousePayload = (event, type) => {
+  const originalEvent = event?.originalEvent ?? event ?? null;
+  const pixel = resolvePixelPosition(event, originalEvent);
+  const dataX = isFiniteNumber(event?.x) ? event.x : null;
+  const dataY = isFiniteNumber(event?.y) ? event.y : null;
+  const zValue =
+    isFiniteNumber(dataX) && isFiniteNumber(dataY)
+      ? resolveZValue(dataX, dataY)
+      : null;
+
+  const button =
+    typeof originalEvent?.button === "number"
+      ? originalEvent.button
+      : mapWhichToButton(event?.which);
+
+  const payload = {
+    type,
+    pixel: {
+      x: pixel.x,
+      y: pixel.y,
+    },
+    sigplot: {
+      x: dataX,
+      y: dataY,
+      z: zValue,
+    },
+    button,
+    buttons:
+      typeof originalEvent?.buttons === "number"
+        ? originalEvent.buttons
+        : button === null
+          ? 0
+          : 1 << button,
+    which:
+      typeof event?.which === "number"
+        ? event.which
+        : typeof originalEvent?.which === "number"
+          ? originalEvent.which
+          : null,
+    altKey: !!originalEvent?.altKey,
+    ctrlKey: !!originalEvent?.ctrlKey,
+    metaKey: !!originalEvent?.metaKey,
+    shiftKey: !!(originalEvent?.shiftKey ?? event?.shift),
+    nativeEvent: originalEvent,
+    preventDefault: () => {
+      if (typeof event?.preventDefault === "function") {
+        event.preventDefault();
+      } else if (typeof originalEvent?.preventDefault === "function") {
+        originalEvent.preventDefault();
+      }
+    },
+    stopPropagation: () => {
+      if (typeof event?.stopPropagation === "function") {
+        event.stopPropagation();
+      } else if (typeof originalEvent?.stopPropagation === "function") {
+        originalEvent.stopPropagation();
+      }
+    },
+  };
+
+  return payload;
+};
+
+const cloneMousePayloadWithType = (payload, type) => ({
+  ...payload,
+  type,
+  pixel: {
+    x: payload.pixel?.x ?? null,
+    y: payload.pixel?.y ?? null,
+  },
+  sigplot: {
+    x: payload.sigplot?.x ?? null,
+    y: payload.sigplot?.y ?? null,
+    z: payload.sigplot?.z ?? null,
+  },
+});
+
+const addPlotListener = (eventName, handler) => {
+  if (!plot || typeof plot.addListener !== "function") {
+    return;
+  }
+  plot.addListener(eventName, handler);
+  plotEventListeners.push({ eventName, handler });
+};
+
+const addDomListener = (target, eventName, handler, options) => {
+  if (!target || typeof target.addEventListener !== "function") {
+    return;
+  }
+  target.addEventListener(eventName, handler, options);
+  domEventListeners.push({ target, eventName, handler, options });
+};
+
+const cleanupPlotListeners = () => {
+  if (plot && typeof plot.removeListener === "function") {
+    plotEventListeners.forEach(({ eventName, handler }) => {
+      plot.removeListener(eventName, handler);
+    });
+  }
+  plotEventListeners.length = 0;
+
+  domEventListeners.forEach(({ target, eventName, handler, options }) => {
+    target.removeEventListener(eventName, handler, options);
+  });
+  domEventListeners.length = 0;
+
+  pointerInsidePlotArea = false;
+  lastMousePayload = null;
+};
+
+const ensurePointerEntered = (payload) => {
+  if (pointerInsidePlotArea) {
+    return;
+  }
+  pointerInsidePlotArea = true;
+  emit("mouseenter", cloneMousePayloadWithType(payload, "mouseenter"));
+};
+
+const handleMouseDown = (event) => {
+  if (!isEventInsidePlot(event)) {
+    return;
+  }
+  const payload = buildMousePayload(event, "mousedown");
+  if (props.disableDefaultClickBehavior) {
+    payload.preventDefault();
+  }
+  ensurePointerEntered(payload);
+  lastMousePayload = payload;
+  emit("mousedown", payload);
+};
+
+const handleMouseMove = (event) => {
+  const inside = isEventInsidePlot(event);
+  if (!inside) {
+    if (pointerInsidePlotArea && lastMousePayload) {
+      emit(
+        "mouseleave",
+        cloneMousePayloadWithType(lastMousePayload, "mouseleave"),
+      );
+    }
+    pointerInsidePlotArea = false;
+    lastMousePayload = null;
+    return;
+  }
+
+  const payload = buildMousePayload(event, "mousemove");
+  if (!pointerInsidePlotArea) {
+    pointerInsidePlotArea = true;
+    emit("mouseenter", cloneMousePayloadWithType(payload, "mouseenter"));
+  }
+
+  lastMousePayload = payload;
+  emit("mousemove", payload);
+};
+
+const handleMouseUp = (event) => {
+  if (!isEventInsidePlot(event)) {
+    return;
+  }
+  const payload = buildMousePayload(event, "mouseup");
+  if (props.disableDefaultClickBehavior) {
+    payload.preventDefault();
+  }
+  ensurePointerEntered(payload);
+  lastMousePayload = payload;
+  emit("mouseup", payload);
+
+  if (payload.button === 2 || payload.which === 3) {
+    emit("contextmenu", cloneMousePayloadWithType(payload, "contextmenu"));
+  }
+};
+
+const handleMouseClick = (event) => {
+  if (!isEventInsidePlot(event)) {
+    return;
+  }
+  const payload = buildMousePayload(event, "click");
+  if (props.disableDefaultClickBehavior) {
+    payload.preventDefault();
+  }
+  ensurePointerEntered(payload);
+  lastMousePayload = payload;
+  emit("click", payload);
+};
+
+const handleMouseDoubleClick = (event) => {
+  if (!isEventInsidePlot(event)) {
+    return;
+  }
+  const payload = buildMousePayload(event, "dblclick");
+  if (props.disableDefaultClickBehavior) {
+    payload.preventDefault();
+  }
+  ensurePointerEntered(payload);
+  lastMousePayload = payload;
+  emit("dblclick", payload);
+};
+
+const buildWheelPayload = (event) => {
+  if (!plot) {
+    return null;
+  }
+
+  const metrics = getPlotMetrics();
+  const canvas = metrics?.canvas;
+  if (!metrics || !canvas) {
+    return null;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const pixelX = event.clientX - rect.left;
+  const pixelY = event.clientY - rect.top;
+
+  if (!isPixelWithinPlotArea(pixelX, pixelY)) {
+    return null;
+  }
+
+  const mxApi = sigplot && sigplot.mx;
+  let data = { x: null, y: null };
+  if (mxApi && typeof mxApi.pixel_to_real === "function") {
+    try {
+      const resolved = mxApi.pixel_to_real(metrics, pixelX, pixelY);
+      if (resolved) {
+        data = resolved;
+      }
+    } catch (error) {
+      // Ignore failures to resolve data coordinates
+    }
+  }
+
+  const zValue =
+    isFiniteNumber(data.x) && isFiniteNumber(data.y)
+      ? resolveZValue(data.x, data.y)
+      : null;
+
+  return {
+    type: "wheel",
+    deltaX: event.deltaX,
+    deltaY: event.deltaY,
+    deltaZ: event.deltaZ,
+    deltaMode: event.deltaMode,
+    pixel: {
+      x: pixelX,
+      y: pixelY,
+    },
+    sigplot: {
+      x: isFiniteNumber(data.x) ? data.x : null,
+      y: isFiniteNumber(data.y) ? data.y : null,
+      z: zValue,
+    },
+    altKey: event.altKey,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    shiftKey: event.shiftKey,
+    nativeEvent: event,
+    preventDefault: () => event.preventDefault(),
+    stopPropagation: () => event.stopPropagation(),
+  };
+};
+
+const handleWheel = (event) => {
+  const payload = buildWheelPayload(event);
+  if (!payload) {
+    return;
+  }
+  pointerInsidePlotArea = true;
+  lastMousePayload = cloneMousePayloadWithType(payload, "wheel");
+  emit("wheel", payload);
+};
+
+const registerPlotListeners = () => {
+  cleanupPlotListeners();
+  if (!plot) {
+    return;
+  }
+
+  addPlotListener("mdown", handleMouseDown);
+  addPlotListener("mmove", handleMouseMove);
+  addPlotListener("mup", handleMouseUp);
+  addPlotListener("mclick", handleMouseClick);
+  addPlotListener("mdblclick", handleMouseDoubleClick);
+  addPlotListener("zoom", (event) => {
+    emit("zoom", {
+      type: "zoom",
+      level: event?.level ?? null,
+      continuous: !!event?.inContinuousZoom,
+      xmin: event?.xmin ?? null,
+      xmax: event?.xmax ?? null,
+      ymin: event?.ymin ?? null,
+      ymax: event?.ymax ?? null,
+    });
+  });
+  addPlotListener("unzoom", (event) => {
+    emit("unzoom", {
+      type: "unzoom",
+      level: event?.level ?? null,
+      xmin: event?.xmin ?? null,
+      xmax: event?.xmax ?? null,
+      ymin: event?.ymin ?? null,
+      ymax: event?.ymax ?? null,
+    });
+  });
+
+  if (plotContainer.value) {
+    addDomListener(plotContainer.value, "wheel", handleWheel, wheelListenerOptions);
+    addDomListener(
+      plotContainer.value,
+      "mouseleave",
+      () => {
+        if (pointerInsidePlotArea && lastMousePayload) {
+          emit(
+            "mouseleave",
+            cloneMousePayloadWithType(lastMousePayload, "mouseleave"),
+          );
+        }
+        pointerInsidePlotArea = false;
+        lastMousePayload = null;
+      },
+      false,
+    );
+  }
+};
 
 const resolveThemeColor = (key, fallback) => {
   const colors = theme.current.value.colors ?? {};
@@ -391,9 +865,11 @@ onMounted(() => {
   createRasterLayer();
   applyPlotColors();
   applyColormap();
+  registerPlotListeners();
 });
 
 onBeforeUnmount(() => {
+  cleanupPlotListeners();
   if (plot && rasterLayer !== null) {
     plot.remove_layer(rasterLayer);
   }
@@ -442,6 +918,55 @@ defineExpose({
     } else {
       createRasterLayer();
     }
+  },
+  zoomTo({
+    xmin,
+    xmax,
+    ymin,
+    ymax,
+    continuous = false,
+  } = {}) {
+    if (!plot || typeof plot.zoom !== "function") {
+      return;
+    }
+
+    plot.zoom(
+      {
+        x: xmin,
+        y: ymin,
+      },
+      {
+        x: xmax,
+        y: ymax,
+      },
+      continuous,
+    );
+  },
+  zoomToPixels({
+    x0,
+    y0,
+    x1,
+    y1,
+    continuous = false,
+  } = {}) {
+    if (
+      !plot ||
+      typeof plot.pixel_zoom !== "function" ||
+      !isFiniteNumber(x0) ||
+      !isFiniteNumber(y0) ||
+      !isFiniteNumber(x1) ||
+      !isFiniteNumber(y1)
+    ) {
+      return;
+    }
+
+    plot.pixel_zoom(x0, y0, x1, y1, continuous);
+  },
+  unzoom(levels = 1) {
+    if (!plot || typeof plot.unzoom !== "function") {
+      return;
+    }
+    plot.unzoom(levels);
   },
 });
 
