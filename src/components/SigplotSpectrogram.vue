@@ -64,10 +64,6 @@ const props = defineProps({
     type: String,
     default: null,
   },
-  disableDefaultClickBehavior: {
-    type: Boolean,
-    default: false,
-  },
 });
 
 const emit = defineEmits([
@@ -356,9 +352,6 @@ const handleMouseDown = (event) => {
     return;
   }
   const payload = buildMousePayload(event, "mousedown");
-  if (props.disableDefaultClickBehavior) {
-    payload.preventDefault();
-  }
   ensurePointerEntered(payload);
   lastMousePayload = payload;
   emit("mousedown", payload);
@@ -393,9 +386,6 @@ const handleMouseUp = (event) => {
     return;
   }
   const payload = buildMousePayload(event, "mouseup");
-  if (props.disableDefaultClickBehavior) {
-    payload.preventDefault();
-  }
   ensurePointerEntered(payload);
   lastMousePayload = payload;
   emit("mouseup", payload);
@@ -410,9 +400,6 @@ const handleMouseClick = (event) => {
     return;
   }
   const payload = buildMousePayload(event, "click");
-  if (props.disableDefaultClickBehavior) {
-    payload.preventDefault();
-  }
   ensurePointerEntered(payload);
   lastMousePayload = payload;
   emit("click", payload);
@@ -423,9 +410,6 @@ const handleMouseDoubleClick = (event) => {
     return;
   }
   const payload = buildMousePayload(event, "dblclick");
-  if (props.disableDefaultClickBehavior) {
-    payload.preventDefault();
-  }
   ensurePointerEntered(payload);
   lastMousePayload = payload;
   emit("dblclick", payload);
